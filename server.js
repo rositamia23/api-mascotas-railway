@@ -72,6 +72,9 @@ async function registrarMovimiento(usuario_id, usuario_email, accion, entidad, e
   }
 }
 
+// ==========================================
+// ENDPOINTS DE AUTENTICACIÓN
+// ==========================================
 app.post('/api/register', async (req, res) => {
   try {
     const { nombre, username, celular, email, dni, foto_dni, password } = req.body;
@@ -82,7 +85,6 @@ app.post('/api/register', async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, "usuario")`;
 
     const [r] = await pool.query(sql, [nombre, username, email, password, celular, dni, urlFotoDni]);
-    
     await registrarMovimiento(r.insertId, email, 'REGISTRO', 'usuarios', r.insertId, `Nuevo usuario registrado: ${username}`);
     res.status(201).json({ message: 'Ok', usuario_id: r.insertId });
   } catch (e) { handleErr(res, e); }
@@ -102,11 +104,14 @@ app.post('/api/login', async (req, res) => {
     }
 
     await pool.query('UPDATE usuarios SET ultimo_movimiento = CURRENT_TIMESTAMP WHERE usuario_id = ?', [u.usuario_id]);
-    await registrarMovimiento(u.usuario_id, u.correo, 'LOGIN', 'usuarios', u.usuario_id, `Inicio de sesión exitoso desde app móvil`);
+    await registrarMovimiento(u.usuario_id, u.correo, 'LOGIN', 'usuarios', u.usuario_id, `Inicio de sesión exitoso`);
     res.json({ id: u.usuario_id, nombre: u.nombre_completo, email: u.correo, rol: u.rol, celular: u.celular, dni: u.dni });
   } catch (e) { handleErr(res, e); }
 });
 
+// ==========================================
+// ENDPOINTS: ADOPCIONES
+// ==========================================
 app.get('/api/adopciones', async (req, res) => {
   try {
     const [r] = await pool.query("SELECT * FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' ORDER BY mascota_id DESC");
@@ -120,14 +125,12 @@ app.post('/api/adopciones', async (req, res) => {
     const fixedUid = usuario_id || 1;
     const fixedLat = latitud || -8.1119;
     const fixedLon = longitud || -79.0286;
-
     const urlImagenMascota = await procesarYSubirImagen(imagen, 'mascotas_adopcion');
 
     const [r] = await pool.query(
       'INSERT INTO mascotas_adopcion (usuario_id, nombre, etapa, raza, ubicacion, latitud, longitud, notas, imagen, usuario_email, fecha_publicacion, estado, celular_contacto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), "activo", ?)', 
       [fixedUid, nombre, etapa, raza, ubicacion, fixedLat, fixedLon, notas, urlImagenMascota, usuario_email, celular_contacto]
     );
-    
     await registrarMovimiento(fixedUid, usuario_email, 'CREAR', 'mascotas_adopcion', r.insertId, `Publicó a ${nombre} en adopción`);
     res.status(201).json({ message: 'Ok', mascota_id: r.insertId });
   } catch (e) { handleErr(res, e); }
@@ -139,8 +142,7 @@ app.put('/api/adopciones/:id', async (req, res) => {
     const urlImagenMascota = await procesarYSubirImagen(imagen, 'mascotas_adopcion');
     
     await pool.query('UPDATE mascotas_adopcion SET nombre=?, etapa=?, raza=?, ubicacion=?, latitud=?, longitud=?, notas=?, imagen=?, celular_contacto=? WHERE mascota_id=?', [nombre, etapa, raza, ubicacion, latitud, longitud, notas, urlImagenMascota, celular_contacto, req.params.id]);
-    
-    await registrarMovimiento(usuario_id, usuario_email, 'EDITAR', 'mascotas_adopcion', req.params.id, `Modificó los datos de la mascota id: ${req.params.id}`);
+    await registrarMovimiento(usuario_id, usuario_email, 'EDITAR', 'mascotas_adopcion', req.params.id, `Modificó datos id: ${req.params.id}`);
     res.json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
@@ -155,6 +157,9 @@ app.delete('/api/adopciones/:id', async (req, res) => {
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// ==========================================
+// ENDPOINTS: PERDIDOS
+// ==========================================
 app.get('/api/perdidos', async (req, res) => {
   try {
     const [r] = await pool.query("SELECT * FROM mascotas_perdidas WHERE COALESCE(estado, 'activo')='activo' ORDER BY alerta_id DESC");
@@ -168,14 +173,12 @@ app.post('/api/perdidos', async (req, res) => {
     const fixedUid = usuario_id || 1;
     const fixedLat = latitud || -8.1119;
     const fixedLon = longitud || -79.0286;
-
     const urlImagenPerdido = await procesarYSubirImagen(imagen, 'mascotas_perdidas');
 
     const [r] = await pool.query(
       'INSERT INTO mascotas_perdidas (usuario_id, nombre, raza, celular, dueno, fecha_extravio, ubicacion, notas, latitud, longitud, imagen, usuario_email, recompensa, fecha_publicacion, estado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), "activo")', 
       [fixedUid, nombre, raza, celular, dueno, fecha_extravio, ubicacion, notas, fixedLat, fixedLon, urlImagenPerdido, usuario_email, recompensa]
     );
-    
     await registrarMovimiento(fixedUid, usuario_email, 'CREAR', 'mascotas_perdidas', r.insertId, `Creó alerta de extravio de ${nombre}`);
     res.status(201).json({ message: 'Ok', alerta_id: r.insertId });
   } catch (e) { handleErr(res, e); }
@@ -187,8 +190,7 @@ app.put('/api/perdidos/:id', async (req, res) => {
     const urlImagenPerdido = await procesarYSubirImagen(imagen, 'mascotas_perdidas');
     
     await pool.query('UPDATE mascotas_perdidas SET nombre=?, raza=?, celular=?, dueno=?, ubicacion=?, notas=?, latitud=?, longitud=?, imagen=?, recompensa=? WHERE alerta_id=?', [nombre, raza, celular, dueno, ubicacion, notas, latitud, longitud, urlImagenPerdido, recompensa, req.params.id]);
-    
-    await registrarMovimiento(usuario_id, usuario_email, 'EDITAR', 'mascotas_perdidas', req.params.id, `Actualizó alerta de extravio id: ${req.params.id}`);
+    await registrarMovimiento(usuario_id, usuario_email, 'EDITAR', 'mascotas_perdidas', req.params.id, `Actualizó alerta id: ${req.params.id}`);
     res.json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
@@ -198,10 +200,13 @@ app.delete('/api/perdidos/:id', async (req, res) => {
   try {
     await pool.query('DELETE FROM movimientos_usuarios WHERE entidad_id = ? AND (accion LIKE "%Alerta%" OR entidad = "perdido")', [id]);
     await pool.query('DELETE FROM mascotas_perdidas WHERE alerta_id = ?', [id]);
-    res.json({ message: 'Alerta y notificaciones eliminadas correctamente' });
+    res.json({ message: 'Alerta eliminada correctamente' });
   } catch (error) { res.status(500).json({ error: error.message }); }
 });
 
+// ==========================================
+// ENDPOINTS: RESCATES
+// ==========================================
 app.get('/api/rescates', async (req, res) => {
   try {
     const [r] = await pool.query("SELECT * FROM registro_rescates ORDER BY ficha_id DESC");
@@ -215,14 +220,12 @@ app.post('/api/rescates', async (req, res) => {
     const fixedUid = usuario_id || 1;
     const fixedLat = latitud || -8.1119;
     const fixedLon = longitud || -79.0286;
-
     const urlImagenRescate = await procesarYSubirImagen(imagen, 'registro_rescates');
 
     const [r] = await pool.query(
       'INSERT INTO registro_rescates (usuario_id, nombre, especie, estado_clinico, ubicacion, notas, latitud, longitud, imagen, usuario_email, celular_contacto, fecha_publicacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())', 
       [fixedUid, nombre, especie, estado_clinico, ubicacion, notas, fixedLat, fixedLon, urlImagenRescate, usuario_email, celular_contacto]
     );
-    
     await registrarMovimiento(fixedUid, usuario_email, 'CREAR', 'registro_rescates', r.insertId, `Reportó caso de emergencia médica para ${nombre}`);
     res.status(201).json({ message: 'Ok', ficha_id: r.insertId });
   } catch (e) { handleErr(res, e); }
@@ -237,8 +240,7 @@ app.put('/api/rescates/:id', async (req, res) => {
       'UPDATE registro_rescates SET nombre=?, especie=?, estado_clinico=?, ubicacion=?, notas=?, latitud=?, longitud=?, imagen=?, celular_contacto=? WHERE ficha_id=?', 
       [nombre, especie, estado_clinico, ubicacion, notas, latitud, longitud, urlImagenRescate, celular_contacto, req.params.id]
     );
-    
-    await registrarMovimiento(usuario_id, usuario_email, 'EDITAR', 'registro_rescates', req.params.id, `Modificó caso clínico id: ${req.params.id}`);
+    await registrarMovimiento(usuario_id, usuario_email, 'EDITAR', 'registro_rescates', req.params.id, `Modificó rescate id: ${req.params.id}`);
     res.json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
@@ -250,11 +252,14 @@ app.delete('/api/rescates/:id', async (req, res) => {
     if(rows.length > 0) { uid = rows[0].usuario_id; email = rows[0].usuario_email; }
 
     await pool.query("DELETE FROM registro_rescates WHERE ficha_id=?", [req.params.id]);
-    await registrarMovimiento(uid, email, 'ELIMINAR', 'registro_rescates', req.params.id, `Eliminó físicamente de la base de datos el caso clínico id: ${req.params.id}`);
+    await registrarMovimiento(uid, email, 'ELIMINAR', 'registro_rescates', req.params.id, `Eliminó rescate id: ${req.params.id}`);
     res.json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
 
+// ==========================================
+// ENDPOINTS: SOLICITUDES DE ADOPCION
+// ==========================================
 app.get('/api/solicitudes', async (req, res) => {
   try {
     const [r] = await pool.query("SELECT * FROM solicitudes_adopcion ORDER BY solicitud_id DESC");
@@ -276,11 +281,14 @@ app.post('/api/solicitudes', async (req, res) => {
     const sql = `INSERT INTO solicitudes_adopcion (mascota_id, nombre_mascota, usuario_solicitante, correo_solicitante, telefono_solicitante, nombre_solicitante, dni_solicitante, numero_solicitante, vivienda, experiencia, estado, fecha_solicitud, usuario_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), ?)`;
     const [r] = await pool.query(sql, [fixedMascotaId, nombre_mascota || 'Mascota', usuario_solicitante || 'Anónimo', correo_solicitante || 'correo@test.com', telefono_solicitante || '987654321', nombre_solicitante || '', dni_solicitante || '', numero_solicitante || '', vivienda || '', experiencia || '', estado || 'pendiente', usuario_id || null]);
     
-    await registrarMovimiento(usuario_id, correo_solicitante, 'CREAR', 'solicitudes_adopcion', r.insertId, `Envió un formulario de adopción para la mascota ID: ${fixedMascotaId}`);
+    await registrarMovimiento(usuario_id, correo_solicitante, 'CREAR', 'solicitudes_adopcion', r.insertId, `Envió formulario adopción para ID: ${fixedMascotaId}`);
     res.status(201).json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
 
+// ==========================================
+// ENDPOINTS: APOYOS
+// ==========================================
 app.get('/api/apoyos', async (req, res) => {
   try {
     let q = "SELECT * FROM apoyo_beneficio WHERE COALESCE(estado, 'activo')='activo'";
@@ -290,7 +298,6 @@ app.get('/api/apoyos', async (req, res) => {
     const staff = ['administrador', 'admin', 'supervisor'];
 
     if (staff.includes(rolLimpio) || emailLimpio.includes('admin') || emailLimpio === 'coordinador@mascotasunidas.org') {
-      // Personal ve todo
     } else {
       q += " AND (estado_revision='aprobado'";
       if (emailLimpio.length > 0) {
@@ -300,13 +307,6 @@ app.get('/api/apoyos', async (req, res) => {
     }
     const [r] = await pool.query(q + ' ORDER BY donacion_id DESC', params);
     res.json(r);
-  } catch (e) { handleErr(res, e); }
-});
-
-app.get('/api/apoyos/denuncias/:id', async (req, res) => {
-  try {
-    const [rows] = await pool.query("SELECT * FROM denuncias_apoyo WHERE apoyo_id = ? ORDER BY denuncia_id DESC", [req.params.id]);
-    res.json(rows);
   } catch (e) { handleErr(res, e); }
 });
 
@@ -360,7 +360,7 @@ app.post('/api/apoyos', async (req, res) => {
 app.put('/api/apoyos/revision/:id', async (req, res) => {
   try {
     await pool.query('UPDATE apoyo_beneficio SET estado_revision=? WHERE donacion_id=?', [req.body.estado_revision, req.params.id]);
-    await registrarMovimiento(1, 'admin@mascotas.com', 'REVISIÓN', 'apoyo_beneficio', req.params.id, `Cambió estado de revisión de la campaña a: ${req.body.estado_revision}`);
+    await registrarMovimiento(1, 'admin@mascotas.com', 'REVISIÓN', 'apoyo_beneficio', req.params.id, `Cambió estado de revisión a: ${req.body.estado_revision}`);
     res.json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
@@ -372,6 +372,9 @@ app.delete('/api/apoyos/:id', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
+// ==========================================
+// 📊 DASHBOARD & NOTIFICACIONES
+// ==========================================
 app.get('/api/dashboard', async (req, res) => {
   try {
     const [[adop]] = await pool.query("SELECT COUNT(*) as c FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo'");
@@ -379,11 +382,30 @@ app.get('/api/dashboard', async (req, res) => {
     const [[resc]] = await pool.query("SELECT COUNT(*) as c FROM registro_rescates");
     const [[apoy]] = await pool.query("SELECT COUNT(*) as c FROM apoyo_beneficio WHERE COALESCE(estado, 'activo')='activo' AND estado_revision='aprobado'");
 
-    const totalSincronizado = adop.c + perd.c + resc.c + apoy.c;
-    res.json({ total_mascotas: totalSincronizado, en_adopcion: adop.c, alertas_activas: perd.c, casos_exitosos: resc.c });
+    const total = adop.c + perd.c + resc.c + apoy.c;
+    res.json({ total_mascotas: total, en_adopcion: adop.c, alertas_activas: perd.c, casos_exitosos: resc.c });
   } catch (e) { handleErr(res, e); }
 });
 
+app.get('/api/notificaciones', async (req, res) => {
+  try {
+    const sql = `SELECT 'solicitud' as tipo, 'Trámite Adopción' as titulo, CONCAT(s.usuario_solicitante, ' solicitó la adopción de ', s.nombre_mascota) as subtitulo, s.fecha as orden FROM solicitudes_adopcion s INNER JOIN mascotas_adopcion m ON s.mascota_id = m.mascota_id WHERE COALESCE(m.estado, 'activo')='activo' UNION ALL SELECT 'adopcion' as tipo, 'Nueva Adopción' as titulo, CONCAT('Se publicó a ', nombre, ' en adopción') as subtitulo, fecha_publicacion as orden FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' UNION ALL SELECT 'perdido' as tipo, 'Alerta Roja' as titulo, CONCAT('Mascota extraviada: ', nombre) as subtitulo, fecha_publicacion as orden FROM mascotas_perdidas WHERE COALESCE(estado, 'activo')='activo' ORDER BY orden DESC LIMIT 5`;
+    const [notificaciones] = await pool.query(sql);
+    res.json(notificaciones);
+  } catch (e) { handleErr(res, e); }
+});
+
+app.get('/api/limpiar-notificaciones', async (req, res) => {
+  try {
+    await pool.query('TRUNCATE TABLE movimientos_usuarios');
+    await pool.query('TRUNCATE TABLE solicitudes_adopcion');
+    res.send('<h1 style="color: green; text-align: center; margin-top: 50px;">¡Limpieza exitosa! 🧹<br>Las notificaciones fantasma han sido eliminadas. Ya puedes cerrar esta ventana.</h1>');
+  } catch (error) { res.status(500).send('<h1 style="color: red;">Error en la limpieza: ' + error.message + '</h1>'); }
+});
+
+// ==========================================
+// 🗺️ MAPA GLOBAL INTEGRADO TOTAL
+// ==========================================
 app.get('/api/mapa-global', async (req, res) => {
   try {
     const [adopciones] = await pool.query(`
@@ -431,25 +453,6 @@ app.get('/api/mapa-global', async (req, res) => {
   } catch (e) { 
     console.error("Error en mapa-global:", e);
     res.status(500).json({ error: e.message }); 
-  }
-});
-
-app.get('/api/notificaciones', async (req, res) => {
-  try {
-    const sql = `SELECT 'solicitud' as tipo, 'Trámite Adopción' as titulo, CONCAT(s.usuario_solicitante, ' solicitó la adopción de ', s.nombre_mascota) as subtitulo, s.fecha as orden FROM solicitudes_adopcion s INNER JOIN mascotas_adopcion m ON s.mascota_id = m.mascota_id WHERE COALESCE(m.estado, 'activo')='activo' UNION ALL SELECT 'adopcion' as tipo, 'Nueva Adopción' as titulo, CONCAT('Se publicó a ', nombre, ' en adopción') as subtitulo, fecha_publicacion as orden FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' UNION ALL SELECT 'perdido' as tipo, 'Alerta Roja' as titulo, CONCAT('Mascota extraviada: ', nombre) as subtitulo, fecha_publicacion as orden FROM mascotas_perdidas WHERE COALESCE(estado, 'activo')='activo' ORDER BY orden DESC LIMIT 5`;
-    const [notificaciones] = await pool.query(sql);
-    res.json(notificaciones);
-  } catch (e) { handleErr(res, e); }
-});
-
-app.get('/api/limpiar-notificaciones', async (req, res) => {
-  try {
-    await pool.query('TRUNCATE TABLE movimientos_usuarios');
-    await pool.query('TRUNCATE TABLE solicitudes_adopcion');
-    
-    res.send('<h1 style="color: green; text-align: center; margin-top: 50px;">¡Limpieza exitosa! 🧹<br>Las notificaciones fantasma han sido eliminadas. Ya puedes cerrar esta ventana y revisar tu app en Flutter.</h1>');
-  } catch (error) {
-    res.status(500).send('<h1 style="color: red;">Error en la limpieza: ' + error.message + '</h1>');
   }
 });
 
