@@ -1,5 +1,6 @@
 const express = require('express');
 const mysql = require('mysql2/promise');
+const cloudinary = require('cloudinary').v2; // ☁️ Soporte de Cloudinary integrado
 const cors = require('cors');
 require('dotenv').config();
 
@@ -8,7 +9,7 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
-// Desactivar caché para evitar datos obsoletos
+// Desactivar caché para evitar datos obsoletos en la aplicación móvil
 app.use((req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma', 'no-cache');
@@ -16,20 +17,24 @@ app.use((req, res, next) => {
   next();
 });
 
-// 🛠️ CONFIGURACIÓN NATIVA PARA RAILWAY.APP
-// Railway inyecta automáticamente MYSQL_URL o las variables individuales
-const poolConfig = process.env.MYSQL_URL 
-  ? process.env.MYSQL_URL 
+// ☁️ Configuración global del cliente de Cloudinary
+cloudinary.config({
+  cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
+  api_key: process.env.CLOUDINARY_API_KEY,
+  api_secret: process.env.CLOUDINARY_API_SECRET
+});
+
+// Configuración del Pool de Conexiones a MySQL (Soporta URI maestra y desarrollo local)
+const poolConfig = process.env.DB_URI 
+  ? process.env.DB_URI 
   : {
-      host: process.env.MYSQLHOST || 'localhost',
-      user: process.env.MYSQLUSER || 'root',
-      password: process.env.MYSQLPASSWORD || '',
-      database: process.env.MYSQLDATABASE || 'railway',
-      port: parseInt(process.env.MYSQLPORT || '3306'),
+      host: '127.0.0.1',
+      user: 'grupo',
+      password: 'mascotasunidas',
+      database: 'mascotas_unidas',
       waitForConnections: true,
-      connectionLimit: 5, // Railway soporta más tráfico, subimos el límite
-      queueLimit: 0,
-      idleTimeout: 10000
+      connectionLimit: 5,
+      queueLimit: 0
     };
 
 const pool = mysql.createPool(poolConfig);
@@ -39,24 +44,33 @@ function handleErr(res, e) {
   res.status(500).json({ error: e.message });
 }
 
-// 📸 FUNCIÓN MULTIMEDIA NATIVA: Guarda el Base64 limpio directo a MySQL
-async function procesarYSubirImagen(inputImagen) {
+// ☁️ FUNCIÓN MAESTRA MULTIMEDIA: Sube Base64 a Cloudinary y devuelve la URL estable
+async function procesarYSubirImagen(inputImagen, carpetaDestino = 'mascotas_unidas') {
   if (!inputImagen || typeof inputImagen !== 'string' || inputImagen.trim() === '') return '';
   
+  // Si ya es una URL de internet (Cloudinary), la dejamos pasar sin re-subir
   if (inputImagen.startsWith('http://') || inputImagen.startsWith('https://')) {
     return inputImagen;
   }
   
-  // Limpiamos la cadena para que no rompa la base de datos
-  let stringBase64 = inputImagen.replace(/\s+/g, ''); 
-  if (!stringBase64.startsWith('data:')) {
-    stringBase64 = `data:image/jpeg;base64,${stringBase64}`;
+  try {
+    let stringBase64 = inputImagen;
+    // Si la cadena no trae el prefijo data:image, se lo inyectamos de forma segura
+    if (!stringBase64.startsWith('data:')) {
+      stringBase64 = `data:image/jpeg;base64,${inputImagen}`;
+    }
+    
+    const uploadResponse = await cloudinary.uploader.upload(stringBase64, {
+      folder: carpetaDestino
+    });
+    return uploadResponse.secure_url; // Retorna la URL "https://res.cloudinary.com/..."
+  } catch (e) {
+    console.error(`❌ Error al subir imagen a Cloudinary en [${carpetaDestino}]:`, e.message);
+    return inputImagen; // Respaldo: si falla, guarda el original para evitar romper el flujo del usuario
   }
-  
-  return stringBase64; 
 }
 
-// 👇 FUNCIÓN MAESTRA DE AUDITORÍA 👇
+// 👇 FUNCIÓN MAESTRA DE AUDITORÍA: Guarda el historial de acciones del usuario en la base de datos 👇
 async function registrarMovimiento(usuario_id, usuario_email, accion, entidad, entidad_id, detalle) {
   try {
     const sql = `INSERT INTO movimientos_usuarios 
@@ -69,19 +83,203 @@ async function registrarMovimiento(usuario_id, usuario_email, accion, entidad, e
   }
 }
 
+// Inicialización del esquema de base de datos exacto de tu Workbench
+async function ensureSchema() {
+  // 1. Tabla: usuarios
+  await pool.query(`CREATE TABLE IF NOT EXISTS usuarios (
+    usuario_id INT NOT NULL AUTO_INCREMENT,
+    nombre_completo VARCHAR(100) NOT NULL,
+    username VARCHAR(50) NOT NULL,
+    correo VARCHAR(100) NOT NULL,
+    clave VARCHAR(100) NOT NULL,
+    celular VARCHAR(20) NOT NULL,
+    dni VARCHAR(20) NOT NULL,
+    foto_dni LONGTEXT NOT NULL,
+    rol VARCHAR(20) NULL DEFAULT 'usuario',
+    foto_perfil LONGTEXT NULL DEFAULT NULL,
+    estado VARCHAR(30) NULL DEFAULT 'activo',
+    creado_en DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
+    ultimo_movimiento DATETIME NULL DEFAULT NULL,
+    PRIMARY KEY (usuario_id),
+    UNIQUE INDEX username_idx (username ASC) VISIBLE,
+    UNIQUE INDEX correo_idx (correo ASC) VISIBLE,
+    UNIQUE INDEX dni_idx (dni ASC) VISIBLE
+  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
+
+  // 2. Tabla: mascotas_adopcion
+  await pool.query(`CREATE TABLE IF NOT EXISTS mascotas_adopcion (
+    mascota_id INT NOT NULL AUTO_INCREMENT,
+    usuario_id INT NOT NULL,
+    nombre VARCHAR(50) NOT NULL,
+    etapa VARCHAR(20) NOT NULL,
+    raza VARCHAR(50) NOT NULL,
+    ubicacion VARCHAR(255) NOT NULL,
+    latitud DOUBLE NOT NULL,
+    longitud DOUBLE NOT NULL,
+    notas TEXT NULL DEFAULT NULL,
+    imagen LONGTEXT NULL DEFAULT NULL,
+    usuario_email VARCHAR(255) NULL DEFAULT NULL,
+    fecha_publicacion DATE NULL DEFAULT NULL,
+    estado VARCHAR(40) NULL DEFAULT 'activo',
+    celular_contacto VARCHAR(20) NULL DEFAULT NULL,
+    PRIMARY KEY (mascota_id)
+  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
+
+  // 3. Tabla: mascotas_perdidas
+  await pool.query(`CREATE TABLE IF NOT EXISTS mascotas_perdidas (
+    alerta_id INT NOT NULL AUTO_INCREMENT,
+    usuario_id INT NOT NULL,
+    nombre VARCHAR(50) NOT NULL,
+    raza VARCHAR(50) NOT NULL,
+    celular VARCHAR(20) NOT NULL,
+    dueno VARCHAR(50) NOT NULL,
+    fecha_extravio DATE NOT NULL,
+    ubicacion VARCHAR(255) NOT NULL,
+    notas TEXT NULL DEFAULT NULL,
+    latitud DOUBLE NOT NULL,
+    longitud DOUBLE NOT NULL,
+    imagen LONGTEXT NULL DEFAULT NULL,
+    usuario_email VARCHAR(255) NULL DEFAULT NULL,
+    recompensa VARCHAR(100) NULL DEFAULT 'No especificada',
+    fecha_publicacion DATE NULL DEFAULT NULL,
+    estado VARCHAR(40) NULL DEFAULT 'activo',
+    PRIMARY KEY (alerta_id)
+  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
+
+  // 4. Tabla: registro_rescates
+  await pool.query(`CREATE TABLE IF NOT EXISTS registro_rescates (
+    ficha_id INT NOT NULL AUTO_INCREMENT,
+    usuario_id INT NOT NULL,
+    nombre VARCHAR(50) NOT NULL,
+    especie VARCHAR(50) NOT NULL,
+    estado_clinico VARCHAR(100) NOT NULL,
+    ubicacion VARCHAR(255) NOT NULL,
+    notas TEXT NULL DEFAULT NULL,
+    latitud DOUBLE NOT NULL,
+    longitud DOUBLE NOT NULL,
+    imagen LONGTEXT NULL DEFAULT NULL,
+    usuario_email VARCHAR(255) NULL DEFAULT NULL,
+    celular_contacto VARCHAR(20) NULL DEFAULT NULL,
+    fecha_publicacion DATE NULL DEFAULT NULL,
+    PRIMARY KEY (ficha_id)
+  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
+
+  // 5. Tabla: solicitudes_adopcion
+  await pool.query(`CREATE TABLE IF NOT EXISTS solicitudes_adopcion (
+    solicitud_id INT NOT NULL AUTO_INCREMENT,
+    mascota_id INT NOT NULL,
+    nombre_mascota VARCHAR(100) NOT NULL,
+    usuario_solicitante VARCHAR(255) NOT NULL,
+    correo_solicitante VARCHAR(100) NOT NULL,
+    telefono_solicitante VARCHAR(20) NOT NULL,
+    fecha TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
+    nombre_solicitante VARCHAR(150) NULL DEFAULT NULL,
+    dni_solicitante VARCHAR(20) NULL DEFAULT NULL,
+    numero_solicitante VARCHAR(20) NULL DEFAULT NULL,
+    vivienda VARCHAR(120) NULL DEFAULT NULL,
+    experiencia TEXT NULL DEFAULT NULL,
+    estado VARCHAR(40) NULL DEFAULT 'pendiente',
+    fecha_solicitud DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
+    usuario_id INT NULL DEFAULT NULL,
+    PRIMARY KEY (solicitud_id)
+  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
+
+  // 6. Tabla: apoyo_beneficio
+  await pool.query(`CREATE TABLE IF NOT EXISTS apoyo_beneficio (
+    donacion_id INT NOT NULL AUTO_INCREMENT,
+    usuario_id INT NOT NULL DEFAULT '0',
+    nombre_solicitante VARCHAR(150) NOT NULL DEFAULT '',
+    dni_solicitante VARCHAR(20) NOT NULL DEFAULT '',
+    correo_solicitante VARCHAR(100) NOT NULL DEFAULT '',
+    telefono_solicitante VARCHAR(20) NOT NULL DEFAULT '',
+    motivo_ayuda VARCHAR(120) NOT NULL DEFAULT '',
+    historia TEXT NOT NULL,
+    meta_recaudacion DECIMAL(10,2) NOT NULL DEFAULT '0.00',
+    monto_recaudado DECIMAL(10,2) NOT NULL DEFAULT '0.00',
+    ubicacion VARCHAR(255) NOT NULL DEFAULT '',
+    latitud DOUBLE NULL DEFAULT NULL,
+    longitud DOUBLE NULL DEFAULT NULL,
+    imagen_mascota LONGTEXT NOT NULL,
+    documento_respaldo LONGTEXT NOT NULL,
+    comprobantes_gasto LONGTEXT NOT NULL,
+    estado_revision VARCHAR(30) NOT NULL DEFAULT 'pendiente',
+    motivo_rechazo TEXT NULL DEFAULT NULL,
+    denuncias_count INT NOT NULL DEFAULT '0',
+    foto_dni LONGTEXT NOT NULL,
+    titulo VARCHAR(255) NOT NULL DEFAULT '',
+    descripcion TEXT NOT NULL,
+    nombre_mascota VARCHAR(100) NOT NULL DEFAULT '',
+    tipo_apoyo VARCHAR(100) NOT NULL DEFAULT '',
+    numero_contacto VARCHAR(20) NOT NULL DEFAULT '',
+    contacto VARCHAR(150) NOT NULL DEFAULT '',
+    imagen LONGTEXT NOT NULL,
+    fotos_mascota LONGTEXT NOT NULL,
+    tipo_documento_respaldo VARCHAR(100) NOT NULL DEFAULT '',
+    evidencia_rescatista LONGTEXT NOT NULL,
+    enlace_redes VARCHAR(255) NOT NULL DEFAULT '',
+    monto_meta VARCHAR(100) NOT NULL DEFAULT '',
+    monto_objetivo VARCHAR(100) NOT NULL DEFAULT '',
+    comprobantes_uso LONGTEXT NOT NULL,
+    actualizaciones TEXT NULL DEFAULT NULL,
+    estado VARCHAR(30) NOT NULL DEFAULT 'activo',
+    usuario_email VARCHAR(255) NOT NULL DEFAULT '',
+    fecha_publicacion DATE NULL DEFAULT NULL,
+    creado_en DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
+    actualizado_en DATETIME NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
+    enlace_documento VARCHAR(500) NOT NULL DEFAULT '',
+    PRIMARY KEY (donacion_id)
+  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
+
+  // 7. Tabla: denuncias_apoyo
+  await pool.query(`CREATE TABLE IF NOT EXISTS denuncias_apoyo (
+    denuncia_id INT NOT NULL AUTO_INCREMENT,
+    apoyo_id INT NOT NULL,
+    usuario_id INT NULL DEFAULT NULL,
+    usuario_email VARCHAR(255) NULL DEFAULT NULL,
+    motivo VARCHAR(255) NOT NULL,
+    detalle TEXT NULL DEFAULT NULL,
+    fecha_denuncia DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (denuncia_id)
+  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
+
+  // 8. Tabla: movimientos_usuarios
+  await pool.query(`CREATE TABLE IF NOT EXISTS movimientos_usuarios (
+    movimiento_id INT NOT NULL AUTO_INCREMENT,
+    usuario_id INT NULL DEFAULT NULL,
+    usuario_email VARCHAR(255) NULL DEFAULT NULL,
+    accion VARCHAR(80) NOT NULL,
+    entidad VARCHAR(80) NULL DEFAULT NULL,
+    entidad_id INT NULL DEFAULT NULL,
+    detalle TEXT NULL DEFAULT NULL,
+    fecha_movimiento DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (movimiento_id)
+  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
+}
+
 // ==========================================
 // ENDPOINTS DE AUTENTICACIÓN
 // ==========================================
 app.post('/api/register', async (req, res) => {
   try {
     const { nombre, username, celular, email, dni, foto_dni, password } = req.body;
-    const base64Dni = await procesarYSubirImagen(foto_dni);
     
+    // Subir foto DNI a Cloudinary de forma asíncrona
+    const urlFotoDni = await procesarYSubirImagen(foto_dni, 'usuarios_dni');
+    
+    // 🌍 CORREGIDO: Las variables siguen exactamente el orden secuencial de la tabla de tu MySQL Workbench
     const sql = `INSERT INTO usuarios 
       (nombre_completo, username, correo, clave, celular, dni, foto_dni, rol) 
       VALUES (?, ?, ?, ?, ?, ?, ?, "usuario")`;
 
-    const [r] = await pool.query(sql, [nombre, username, email, password, celular, dni, base64Dni]);
+    const [r] = await pool.query(sql, [
+      nombre,       // 1. nombre_completo
+      username,     // 2. username
+      email,        // 3. correo
+      password,     // 4. clave
+      celular,      // 5. celular
+      dni,          // 6. dni
+      urlFotoDni    // 7. foto_dni
+    ]);
     
     await registrarMovimiento(r.insertId, email, 'REGISTRO', 'usuarios', r.insertId, `Nuevo usuario registrado: ${username}`);
     res.status(201).json({ message: 'Ok', usuario_id: r.insertId });
@@ -91,15 +289,23 @@ app.post('/api/register', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password, clave } = req.body;
-    const incomingPassword = password || clave; 
+    const incomingPassword = password || clave; // 🌍 CORREGIDO: Mapeo dual para aceptar tanto "password" como "clave"
 
     const [rows] = await pool.query('SELECT * FROM usuarios WHERE correo=? OR username=?', [email, email]);
-    if (rows.length === 0) return res.status(401).json({ error: 'Invalido' });
+    
+    if (rows.length === 0) {
+      return res.status(401).json({ error: 'Invalido' });
+    }
 
     const u = rows[0];
-    if (String(u.clave).trim() !== String(incomingPassword).trim()) return res.status(401).json({ error: 'Invalido' });
+
+    // Validación limpia eliminando espacios en blanco por si acaso
+    if (String(u.clave).trim() !== String(incomingPassword).trim()) {
+      return res.status(401).json({ error: 'Invalido' });
+    }
 
     await pool.query('UPDATE usuarios SET ultimo_movimiento = CURRENT_TIMESTAMP WHERE usuario_id = ?', [u.usuario_id]);
+    
     await registrarMovimiento(u.usuario_id, u.correo, 'LOGIN', 'usuarios', u.usuario_id, `Inicio de sesión exitoso desde app móvil`);
     res.json({ id: u.usuario_id, nombre: u.nombre_completo, email: u.correo, rol: u.rol, celular: u.celular, dni: u.dni });
   } catch (e) { handleErr(res, e); }
@@ -119,14 +325,15 @@ app.post('/api/adopciones', async (req, res) => {
   try {
     const { usuario_id, nombre, etapa, raza, ubicacion, latitud, longitud, notas, imagen, usuario_email, celular_contacto } = req.body;
     const fixedUid = usuario_id || 1;
-    const fixedLat = latitud || -7.7447;
-    const fixedLon = longitud || -79.1822;
+    const fixedLat = latitud || -8.1119;
+    const fixedLon = longitud || -79.0286;
 
-    const base64Img = await procesarYSubirImagen(imagen);
+    // Subir imagen de mascota a Cloudinary
+    const urlImagenMascota = await procesarYSubirImagen(imagen, 'mascotas_adopcion');
 
     const [r] = await pool.query(
       'INSERT INTO mascotas_adopcion (usuario_id, nombre, etapa, raza, ubicacion, latitud, longitud, notas, imagen, usuario_email, fecha_publicacion, estado, celular_contacto) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), "activo", ?)', 
-      [fixedUid, nombre, etapa, raza, ubicacion, fixedLat, fixedLon, notas, base64Img, usuario_email, celular_contacto]
+      [fixedUid, nombre, etapa, raza, ubicacion, fixedLat, fixedLon, notas, urlImagenMascota, usuario_email, celular_contacto]
     );
     
     await registrarMovimiento(fixedUid, usuario_email, 'CREAR', 'mascotas_adopcion', r.insertId, `Publicó a ${nombre} en adopción`);
@@ -137,25 +344,35 @@ app.post('/api/adopciones', async (req, res) => {
 app.put('/api/adopciones/:id', async (req, res) => {
   try {
     const { nombre, etapa, raza, ubicacion, latitud, longitud, notas, imagen, celular_contacto, usuario_id, usuario_email } = req.body;
-    const base64Img = await procesarYSubirImagen(imagen);
     
-    await pool.query('UPDATE mascotas_adopcion SET nombre=?, etapa=?, raza=?, ubicacion=?, latitud=?, longitud=?, notas=?, imagen=?, celular_contacto=? WHERE mascota_id=?', [nombre, etapa, raza, ubicacion, latitud, longitud, notas, base64Img, celular_contacto, req.params.id]);
+    // Subir o verificar imagen existente
+    const urlImagenMascota = await procesarYSubirImagen(imagen, 'mascotas_adopcion');
+    
+    await pool.query('UPDATE mascotas_adopcion SET nombre=?, etapa=?, raza=?, ubicacion=?, latitud=?, longitud=?, notas=?, imagen=?, celular_contacto=? WHERE mascota_id=?', [nombre, etapa, raza, ubicacion, latitud, longitud, notas, urlImagenMascota, celular_contacto, req.params.id]);
     
     await registrarMovimiento(usuario_id, usuario_email, 'EDITAR', 'mascotas_adopcion', req.params.id, `Modificó los datos de la mascota id: ${req.params.id}`);
     res.json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
 
+// ELIMINAR ADOPCIÓN Y SUS NOTIFICACIONES/SOLICITUDES
 app.delete('/api/adopciones/:id', async (req, res) => {
+  const { id } = req.params;
   try {
-    const { usuario_id, usuario_email } = req.body;
-    await pool.query("UPDATE mascotas_adopcion SET estado='inactivo' WHERE mascota_id=?", [req.params.id]);
+    // 1. Borramos las solicitudes de adopción ligadas a esta mascota
+    await pool.query('DELETE FROM solicitudes_adopcion WHERE mascota_id = ?', [id]);
     
-    await registrarMovimiento(usuario_id, usuario_email, 'ELIMINAR', 'mascotas_adopcion', req.params.id, `Puso en estado inactivo la adopción id: ${req.params.id}`);
-    res.json({ message: 'Ok' });
-  } catch (e) { handleErr(res, e); }
+    // 2. Borramos las notificaciones en la campanita
+    await pool.query('DELETE FROM movimientos_usuarios WHERE entidad_id = ? AND (accion LIKE "%Adopción%" OR entidad = "adopcion")', [id]);
+    
+    // 3. Finalmente, borramos la mascota
+    await pool.query('DELETE FROM mascotas_adopcion WHERE mascota_id = ?', [id]);
+    
+    res.json({ message: 'Mascota y notificaciones eliminadas correctamente' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
-
 // ==========================================
 // ENDPOINTS: MASCOTAS PERDIDAS
 // ==========================================
@@ -170,14 +387,15 @@ app.post('/api/perdidos', async (req, res) => {
   try {
     const { usuario_id, nombre, raza, celular, dueno, fecha_extravio, ubicacion, notas, latitud, longitud, imagen, usuario_email, recompensa } = req.body;
     const fixedUid = usuario_id || 1;
-    const fixedLat = latitud || -7.7447;
-    const fixedLon = longitud || -79.1822;
+    const fixedLat = latitud || -8.1119;
+    const fixedLon = longitud || -79.0286;
 
-    const base64Img = await procesarYSubirImagen(imagen);
+    // Subir imagen extraviada a Cloudinary
+    const urlImagenPerdido = await procesarYSubirImagen(imagen, 'mascotas_perdidas');
 
     const [r] = await pool.query(
       'INSERT INTO mascotas_perdidas (usuario_id, nombre, raza, celular, dueno, fecha_extravio, ubicacion, notas, latitud, longitud, imagen, usuario_email, recompensa, fecha_publicacion, estado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), "activo")', 
-      [fixedUid, nombre, raza, celular, dueno, fecha_extravio, ubicacion, notas, fixedLat, fixedLon, base64Img, usuario_email, recompensa]
+      [fixedUid, nombre, raza, celular, dueno, fecha_extravio, ubicacion, notas, fixedLat, fixedLon, urlImagenPerdido, usuario_email, recompensa]
     );
     
     await registrarMovimiento(fixedUid, usuario_email, 'CREAR', 'mascotas_perdidas', r.insertId, `Creó alerta de extravio de ${nombre}`);
@@ -188,25 +406,31 @@ app.post('/api/perdidos', async (req, res) => {
 app.put('/api/perdidos/:id', async (req, res) => {
   try {
     const { nombre, raza, celular, dueno, ubicacion, notas, latitud, longitud, imagen, recompensa, usuario_id, usuario_email } = req.body;
-    const base64Img = await procesarYSubirImagen(imagen);
     
-    await pool.query('UPDATE mascotas_perdidas SET nombre=?, raza=?, celular=?, dueno=?, ubicacion=?, notas=?, latitud=?, longitud=?, imagen=?, recompensa=? WHERE alerta_id=?', [nombre, raza, celular, dueno, ubicacion, notas, latitud, longitud, base64Img, recompensa, req.params.id]);
+    const urlImagenPerdido = await procesarYSubirImagen(imagen, 'mascotas_perdidas');
+    
+    await pool.query('UPDATE mascotas_perdidas SET nombre=?, raza=?, celular=?, dueno=?, ubicacion=?, notas=?, latitud=?, longitud=?, imagen=?, recompensa=? WHERE alerta_id=?', [nombre, raza, celular, dueno, ubicacion, notas, latitud, longitud, urlImagenPerdido, recompensa, req.params.id]);
     
     await registrarMovimiento(usuario_id, usuario_email, 'EDITAR', 'mascotas_perdidas', req.params.id, `Actualizó alerta de extravio id: ${req.params.id}`);
     res.json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
 
+// ELIMINAR ALERTA ROJA Y SUS NOTIFICACIONES
 app.delete('/api/perdidos/:id', async (req, res) => {
+  const { id } = req.params;
   try {
-    const { usuario_id, usuario_email } = req.body;
-    await pool.query("UPDATE mascotas_perdidas SET estado='inactivo' WHERE alerta_id=?", [req.params.id]);
+    // 1. Borramos las notificaciones en la campanita
+    await pool.query('DELETE FROM movimientos_usuarios WHERE entidad_id = ? AND (accion LIKE "%Alerta%" OR entidad = "perdido")', [id]);
     
-    await registrarMovimiento(usuario_id, usuario_email, 'ELIMINAR', 'mascotas_perdidas', req.params.id, `Desactivó alerta de extravio id: ${req.params.id}`);
-    res.json({ message: 'Ok' });
-  } catch (e) { handleErr(res, e); }
+    // 2. Borramos la alerta de la mascota
+    await pool.query('DELETE FROM mascotas_perdidas WHERE alerta_id = ?', [id]);
+    
+    res.json({ message: 'Alerta y notificaciones eliminadas correctamente' });
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
 });
-
 // ==========================================
 // ENDPOINTS: REGISTRO DE RESCATES
 // ==========================================
@@ -219,17 +443,17 @@ app.get('/api/rescates', async (req, res) => {
 
 app.post('/api/rescates', async (req, res) => {
   try {
-    const { usuario_id, nombre, especie, estado_clinico, ubicacion, notes, notas, latitud, longitud, imagen, usuario_email, celular_contacto } = req.body;
+    const { usuario_id, nombre, especie, estado_clinico, ubicacion, notas, latitud, longitud, imagen, usuario_email, celular_contacto } = req.body;
     const fixedUid = usuario_id || 1;
-    const fixedLat = latitud || -7.7447;
-    const fixedLon = longitud || -79.1822;
-    const textoNotas = notas || notes || '';
+    const fixedLat = latitud || -8.1119;
+    const fixedLon = longitud || -79.0286;
 
-    const base64Img = await procesarYSubirImagen(imagen);
+    // Subir imagen de emergencia a Cloudinary
+    const urlImagenRescate = await procesarYSubirImagen(imagen, 'registro_rescates');
 
     const [r] = await pool.query(
       'INSERT INTO registro_rescates (usuario_id, nombre, especie, estado_clinico, ubicacion, notas, latitud, longitud, imagen, usuario_email, celular_contacto, fecha_publicacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())', 
-      [fixedUid, nombre, especie, estado_clinico, ubicacion, textoNotas, fixedLat, fixedLon, base64Img, usuario_email, celular_contacto]
+      [fixedUid, nombre, especie, estado_clinico, ubicacion, notas, fixedLat, fixedLon, urlImagenRescate, usuario_email, celular_contacto]
     );
     
     await registrarMovimiento(fixedUid, usuario_email, 'CREAR', 'registro_rescates', r.insertId, `Reportó caso de emergencia médica para ${nombre}`);
@@ -239,13 +463,13 @@ app.post('/api/rescates', async (req, res) => {
 
 app.put('/api/rescates/:id', async (req, res) => {
   try {
-    const { nombre, especie, estado_clinico, ubicacion, notes, notas, latitud, longitud, imagen, celular_contacto, usuario_id, usuario_email } = req.body;
-    const base64Img = await procesarYSubirImagen(imagen);
-    const textoNotas = notas || notes || '';
+    const { nombre, especie, estado_clinico, ubicacion, notas, latitud, longitud, imagen, celular_contacto, usuario_id, usuario_email } = req.body;
+    
+    const urlImagenRescate = await procesarYSubirImagen(imagen, 'registro_rescates');
     
     await pool.query(
       'UPDATE registro_rescates SET nombre=?, especie=?, estado_clinico=?, ubicacion=?, notas=?, latitud=?, longitud=?, imagen=?, celular_contacto=? WHERE ficha_id=?', 
-      [nombre, especie, estado_clinico, ubicacion, textoNotas, latitud, longitud, base64Img, celular_contacto, req.params.id]
+      [nombre, especie, estado_clinico, ubicacion, notas, latitud, longitud, urlImagenRescate, celular_contacto, req.params.id]
     );
     
     await registrarMovimiento(usuario_id, usuario_email, 'EDITAR', 'registro_rescates', req.params.id, `Modificó caso clínico id: ${req.params.id}`);
@@ -255,13 +479,13 @@ app.put('/api/rescates/:id', async (req, res) => {
 
 app.delete('/api/rescates/:id', async (req, res) => {
   try {
-    const { usuario_id, usuario_email } = req.body;
-    let uid = usuario_id || 1;
-    let email = usuario_email || 'admin@mascotas.com';
+    const [rows] = await pool.query("SELECT usuario_id, usuario_email FROM registro_rescates WHERE ficha_id=?", [req.params.id]);
+    let uid = 1, email = 'admin@mascotas.com';
+    if(rows.length > 0) { uid = rows[0].usuario_id; email = rows[0].usuario_email; }
 
     await pool.query("DELETE FROM registro_rescates WHERE ficha_id=?", [req.params.id]);
     
-    await registrarMovimiento(uid, email, 'ELIMINAR', 'registro_rescates', req.params.id, `Eliminó el caso clínico id: ${req.params.id}`);
+    await registrarMovimiento(uid, email, 'ELIMINAR', 'registro_rescates', req.params.id, `Eliminó físicamente de la base de datos el caso clínico id: ${req.params.id}`);
     res.json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
@@ -306,7 +530,7 @@ app.get('/api/apoyos', async (req, res) => {
     let emailLimpio = (req.query.usuario_email || req.query.email || '').toLowerCase().trim();
     const staff = ['administrador', 'admin', 'supervisor'];
 
-    if (staff.includes(rolLimpio) || emailLimpio.includes('admin') || emailLimpio === 'coordinador@mascotas-unidas.org') {
+    if (staff.includes(rolLimpio) || emailLimpio.includes('admin') || emailLimpio === 'coordinador@mascotasunidas.org') {
       // Personal ve todo
     } else {
       q += " AND (estado_revision='aprobado'";
@@ -338,14 +562,14 @@ app.post('/api/apoyos', async (req, res) => {
     const driveDoc = req.body.enlace_documento || '';
     const emailSol = req.body.correo_solicitante || req.body.usuario_email || '';
     
-    // Todo en Base64 nativo
-    const bMascota = await procesarYSubirImagen(req.body.imagen_mascota);
-    const bDocRespaldo = await procesarYSubirImagen(req.body.documento_respaldo);
-    const bCompGasto = await procesarYSubirImagen(req.body.comprobantes_gasto || req.body.documento_respaldo);
-    const bFotoDni = await procesarYSubirImagen(req.body.foto_dni);
-    const bGeneral = await procesarYSubirImagen(req.body.imagen || req.body.imagen_mascota);
-    const bEviRescatista = await procesarYSubirImagen(req.body.evidencia_rescatista);
-    const bCompUso = await procesarYSubirImagen(req.body.comprobantes_uso);
+    const urlImagenMascota = await procesarYSubirImagen(req.body.imagen_mascota, 'apoyos_campañas');
+    const urlDocumentoRespaldo = await procesarYSubirImagen(req.body.documento_respaldo, 'apoyos_documentos');
+    const urlComprobantesGasto = await procesarYSubirImagen(req.body.comprobantes_gasto || req.body.documento_respaldo, 'apoyos_documentos');
+    const urlFotoDni = await procesarYSubirImagen(req.body.foto_dni, 'apoyos_dni');
+    const urlImagenGeneral = await procesarYSubirImagen(req.body.imagen || req.body.imagen_mascota, 'apoyos_campañas');
+    const urlFotosMascota = await procesarYSubirImagen(req.body.fotos_mascota || req.body.imagen_mascota, 'apoyos_campañas');
+    const urlEvidenciaRescatista = await procesarYSubirImagen(req.body.evidencia_rescatista, 'apoyos_documentos');
+    const urlComprobantesUso = await procesarYSubirImagen(req.body.comprobantes_uso, 'apoyos_documentos');
     
     const sql = `INSERT INTO apoyo_beneficio 
       (usuario_id, nombre_solicitante, dni_solicitante, correo_solicitante, telefono_solicitante, 
@@ -356,14 +580,43 @@ app.post('/api/apoyos', async (req, res) => {
        imagen, fotos_mascota, tipo_documento_respaldo, evidencia_rescatista, enlace_redes, 
        monto_meta, monto_objetivo, comprobantes_uso, actualizaciones, estado, 
        usuario_email, fecha_publicacion, enlace_documento) 
-      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'activo', ?, CURDATE(), ?)`;
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'activo', ?, ?, ?)`;
       
     const values = [
-      userId, req.body.nombre_solicitante || '', req.body.dni_solicitante || '', emailSol, req.body.telefono_solicitante || '', req.body.motivo_ayuda || '', req.body.historia || '',
-      metaRecaudacion, parseFloat(req.body.monto_recaudado) || 0.00, req.body.ubicacion || 'Casa Grande, Ascope', parseFloat(req.body.latitud) || -7.7447, parseFloat(req.body.longitud) || -79.1822,
-      bMascota, bDocRespaldo, bCompGasto, req.body.estado_revision || 'pendiente', bFotoDni, req.body.titulo || 'Campaña', req.body.descripcion || req.body.historia || '',
-      req.body.nombre_mascota || 'Mascota', req.body.tipo_apoyo || 'DINERO', req.body.numero_contacto || '', req.body.contacto || '', bGeneral, bMascota,
-      typeDoc, bEviRescatista, linkRedes, metaAdd, objEsp, bCompUso, emailSol, driveDoc
+      userId,
+      req.body.nombre_solicitante || '',
+      req.body.dni_solicitante || '',
+      emailSol,
+      req.body.telefono_solicitante || '',
+      req.body.motivo_ayuda || '',
+      req.body.historia || '',
+      metaRecaudacion,
+      parseFloat(req.body.monto_recaudado) || 0.00,
+      req.body.ubicacion || 'La Libertad, Perú',
+      parseFloat(req.body.latitud) || -8.1119,
+      parseFloat(req.body.longitud) || -79.0286,
+      urlImagenMascota,
+      urlDocumentoRespaldo,
+      urlComprobantesGasto,
+      req.body.estado_revision || 'pendiente',
+      urlFotoDni,
+      req.body.titulo || 'Campaña',
+      req.body.descripcion || req.body.historia || '',
+      req.body.nombre_mascota || 'Mascota',
+      req.body.tipo_apoyo || 'DINERO',
+      req.body.numero_contacto || '',
+      req.body.contacto || '',
+      urlImagenGeneral,
+      urlFotosMascota,
+      typeDoc,
+      urlEvidenciaRescatista,
+      linkRedes,
+      metaAdd,
+      objEsp,
+      urlComprobantesUso,
+      emailSol,
+      req.body.fecha_publicacion || null,
+      driveDoc
     ];
     
     const [r] = await pool.query(sql, values);
@@ -374,7 +627,7 @@ app.post('/api/apoyos', async (req, res) => {
 
 app.put('/api/apoyos/revision/:id', async (req, res) => {
   try {
-    await pool.query('UPDATE apoyo_beneficio SET estado_revision=?, motivo_rechazo=?, actualizaciones=? WHERE donacion_id=?', [req.body.estado_revision, req.body.motivo_rechazo || null, req.body.actualizaciones || null, req.params.id]);
+    await pool.query('UPDATE apoyo_beneficio SET estado_revision=? WHERE donacion_id=?', [req.body.estado_revision, req.params.id]);
     await registrarMovimiento(1, 'admin@mascotas.com', 'REVISIÓN', 'apoyo_beneficio', req.params.id, `Cambió estado de revisión de la campaña a: ${req.body.estado_revision}`);
     res.json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
@@ -403,54 +656,90 @@ app.get('/api/dashboard', async (req, res) => {
 });
 
 // ==========================================
-// 🗺️ MAPA GLOBAL INTEGRADO
+// 🗺️ MAPA GLOBAL INTEGRADO UNION ALL
+// ==========================================
+// ==========================================
+// ENDPOINT: MAPA GLOBAL INTEGRADO
+// ==========================================
+a// ==========================================
+// ENDPOINT CORREGIDO: MAPA GLOBAL INTEGRADO TOTAL
 // ==========================================
 app.get('/api/mapa-global', async (req, res) => {
   try {
-    const sql = `
-      SELECT mascota_id as id, nombre, 'adopcion' as tipo, notas, ubicacion, COALESCE(latitud, -7.7447) as latitud, COALESCE(longitud, -79.1822) as longitud, imagen, celular_contacto as contacto FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo'
-      UNION ALL 
-      SELECT alerta_id as id, nombre, 'perdido' as tipo, notas, ubicacion, COALESCE(latitud, -7.7447) as latitud, COALESCE(longitud, -79.1822) as longitud, imagen, celular as contacto FROM mascotas_perdidas WHERE COALESCE(estado, 'activo')='activo'
-      UNION ALL 
-      SELECT ficha_id as id, nombre, 'rescate' as tipo, notas, ubicacion, COALESCE(latitud, -7.7447) as latitud, COALESCE(longitud, -79.1822) as longitud, imagen, celular_contacto as contacto FROM registro_rescates
-      UNION ALL
-      SELECT donacion_id as id, titulo as nombre, 'apoyo' as tipo, historia as notas, ubicacion, COALESCE(latitud, -7.7447) as latitud, COALESCE(longitud, -79.1822) as longitud, imagen_mascota as imagen, numero_contacto as contacto FROM apoyo_beneficio WHERE COALESCE(estado, 'activo')='activo' AND estado_revision='aprobado'`;
-    const [rows] = await pool.query(sql);
-    res.json(rows);
-  } catch (e) { handleErr(res, e); }
+    // 1. Adopciones con todas las de la ley
+    const [adopciones] = await pool.query(`
+      SELECT 
+        mascota_id as id, 'adopcion' as tipo, nombre, raza, etapa, ubicacion, 
+        latitud, longitud, notas, imagen, usuario_email, fecha_publicacion as fecha, 
+        estado, celular_contacto as celular,
+        raza as detalles_raza, etapa as detalles_etapa, estado as detalles_estado
+      FROM mascotas_adopcion WHERE estado = 'activo'
+    `);
+    
+    // 2. Perdidos con todos sus campos
+    const [perdidos] = await pool.query(`
+      SELECT 
+        alerta_id as id, 'perdido' as tipo, nombre, raza, dueno, ubicacion, 
+        latitud, longitud, notas, imagen, usuario_email, fecha_publicacion as fecha, 
+        fecha_extravio, recompensa, estado, celular,
+        raza as detalles_raza, dueno as detalles_dueno, fecha_extravio as detalles_fecha_extravio, recompensa as detalles_recompensa
+      FROM mascotas_perdidas WHERE estado = 'activo'
+    `);
+    
+    // 3. Rescates completos
+    const [rescates] = await pool.query(`
+      SELECT 
+        ficha_id as id, 'rescate' as tipo, nombre, especie, estado_clinico, ubicacion, 
+        latitud, longitud, notas, imagen, usuario_email, fecha_publicacion as fecha, 
+        celular_contacto as celular,
+        especie as detalles_especie, estado_clinico as detalles_estado_clinico
+      FROM registro_rescates
+    `);
+    
+    // 4. Apoyos con todo el detalle de montos
+    const [apoyos] = await pool.query(`
+      SELECT 
+        donacion_id as id, 'apoyo' as tipo, titulo as nombre, nombre_mascota, motivo_ayuda, 
+        tipo_apoyo, historia as notas, meta_recaudacion, monto_recaudado, monto_meta, 
+        monto_objetivo, ubicacion, latitud, longitud, imagen_mascota as imagen, 
+        estado_revision, enlace_redes, enlace_documento, usuario_email, fecha_publicacion as fecha, 
+        telefono_solicitante as celular, contacto as dueno,
+        nombre_mascota as detalles_nombre_mascota, motivo_ayuda as detalles_motivo_ayuda, tipo_apoyo as detalles_tipo_apoyo,
+        meta_recaudacion as detalles_meta_recaudacion, monto_recaudado as detalles_monto_recaudado,
+        monto_meta as detalles_monto_meta, monto_objetivo as detalles_monto_objetivo, enlace_redes as detalles_enlace_redes, enlace_documento as detalles_enlace_documento
+      FROM apoyo_beneficio WHERE estado_revision = 'aprobado' AND estado = 'activo'
+    `);
+    
+    const mapaGlobal = [...adopciones, ...perdidos, ...rescates, ...apoyos];
+    res.json(mapaGlobal);
+  } catch (e) { 
+    console.error("Error en mapa-global:", e);
+    res.status(500).json({ error: e.message }); 
+  }
 });
 
-// ==========================================
-// 🔔 NOTIFICACIONES CON RECHAZOS
-// ==========================================
 app.get('/api/notificaciones', async (req, res) => {
   try {
-    const emailLimpio = (req.query.email || req.query.usuario_email || '').toLowerCase().trim();
-    let queryRechazados = "";
-
-    if (emailLimpio.length > 0) {
-      queryRechazados = `
-        UNION ALL
-        SELECT 'rechazado' as tipo, 'Campaña Rechazada' as titulo, CONCAT('Tu solicitud "', titulo, '" fue rechazada. Motivo: ', COALESCE(motivo_rechazo, 'No cumple los requisitos')) as subtitulo, actualizado_en as orden 
-        FROM apoyo_beneficio 
-        WHERE estado_revision='rechazado' AND correo_solicitante = ${pool.escape(emailLimpio)}
-      `;
-    }
-
-    const sql = `
-      SELECT 'solicitud' as tipo, 'Trámite Adopción' as titulo, CONCAT(usuario_solicitante, ' solicitó adoptar a ', nombre_mascota, '. Contacto: ', telefono_solicitante) as subtitulo, fecha_solicitud as orden FROM solicitudes_adopcion
-      UNION ALL 
-      SELECT 'adopcion' as tipo, 'Nueva Adopción' as titulo, CONCAT('Disponible: ', nombre, ' (Raza: ', raza, ', Etapa: ', etapa, ') en ', ubicacion) as subtitulo, fecha_publicacion as orden FROM mascotas_adopcion WHERE estado='activo'
-      UNION ALL 
-      SELECT 'perdido' as tipo, 'Alerta Roja' as titulo, CONCAT('🚨 ¡Mascota extraviada!: ', nombre, ' (', raza, ') visto en ', ubicacion) as subtitulo, fecha_publicacion as orden FROM mascotas_perdidas WHERE estado='activo'
-      ${queryRechazados}
-      ORDER BY orden DESC LIMIT 15`;
-      
+    const sql = `SELECT 'solicitud' as tipo, 'Trámite Adopción' as titulo, CONCAT(s.usuario_solicitante, ' solicitó la adopción de ', s.nombre_mascota) as subtitulo, s.fecha as orden FROM solicitudes_adopcion s INNER JOIN mascotas_adopcion m ON s.mascota_id = m.mascota_id WHERE COALESCE(m.estado, 'activo')='activo' UNION ALL SELECT 'adopcion' as tipo, 'Nueva Adopción' as titulo, CONCAT('Se publicó a ', nombre, ' en adopción') as subtitulo, fecha_publicacion as orden FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' UNION ALL SELECT 'perdido' as tipo, 'Alerta Roja' as titulo, CONCAT('Mascota extraviada: ', nombre) as subtitulo, fecha_publicacion as orden FROM mascotas_perdidas WHERE COALESCE(estado, 'activo')='activo' ORDER BY orden DESC LIMIT 5`;
     const [notificaciones] = await pool.query(sql);
     res.json(notificaciones);
   } catch (e) { handleErr(res, e); }
 });
 
+// ==========================================
+// ENDPOINT TEMPORAL DE LIMPIEZA DE FANTASMAS
+// ==========================================
+app.get('/api/limpiar-notificaciones', async (req, res) => {
+  try {
+    // Esto vaciará las tablas de notificaciones y solicitudes al instante
+    await pool.query('TRUNCATE TABLE movimientos_usuarios');
+    await pool.query('TRUNCATE TABLE solicitudes_adopcion');
+    
+    res.send('<h1 style="color: green; text-align: center; margin-top: 50px;">¡Limpieza exitosa! 🧹<br>Las notificaciones fantasma han sido eliminadas. Ya puedes cerrar esta ventana y revisar tu app en Flutter.</h1>');
+  } catch (error) {
+    res.status(500).send('<h1 style="color: red;">Error en la limpieza: ' + error.message + '</h1>');
+  }
+});
+
 const PORT = process.env.PORT || 3000;
-// Inicia el servidor directo sin necesidad de "ensureSchema" porque las tablas ya las creaste manual en Railway
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API NATIVA ONLINE EN EL PUERTO ${PORT}`));
+ensureSchema().then(() => app.listen(PORT, '0.0.0.0', () => console.log(`API Online en el puerto ${PORT}`)));
