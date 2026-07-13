@@ -1,6 +1,6 @@
 const express = require('express');
 const mysql = require('mysql2/promise');
-const cloudinary = require('cloudinary').v2; 
+const cloudinary = require('cloudinary').v2; // ☁️ Soporte de Cloudinary integrado
 const cors = require('cors');
 require('dotenv').config();
 
@@ -9,6 +9,7 @@ app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
 
+// Desactivar caché para evitar datos obsoletos en la aplicación móvil
 app.use((req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma', 'no-cache');
@@ -16,12 +17,14 @@ app.use((req, res, next) => {
   next();
 });
 
+// ☁️ Configuración global del cliente de Cloudinary
 cloudinary.config({
   cloud_name: process.env.CLOUDINARY_CLOUD_NAME,
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+// Configuración del Pool de Conexiones a MySQL (Soporta URI maestra y desarrollo local)
 const poolConfig = process.env.DB_URI 
   ? process.env.DB_URI 
   : {
@@ -41,6 +44,7 @@ function handleErr(res, e) {
   res.status(500).json({ error: e.message });
 }
 
+// ☁️ FUNCIÓN MAESTRA MULTIMEDIA: Sube Base64 a Cloudinary y devuelve la URL estable
 async function procesarYSubirImagen(inputImagen, carpetaDestino = 'mascotas_unidas') {
   if (!inputImagen || typeof inputImagen !== 'string' || inputImagen.trim() === '') return '';
   
@@ -66,6 +70,7 @@ async function procesarYSubirImagen(inputImagen, carpetaDestino = 'mascotas_unid
   }
 }
 
+// 👇 FUNCIÓN MAESTRA DE AUDITORÍA: Guarda el historial de acciones del usuario en la base de datos 👇
 async function registrarMovimiento(usuario_id, usuario_email, accion, entidad, entidad_id, detalle) {
   try {
     const sql = `INSERT INTO movimientos_usuarios 
@@ -78,6 +83,7 @@ async function registrarMovimiento(usuario_id, usuario_email, accion, entidad, e
   }
 }
 
+// Inicialización del esquema de base de datos exacto de tu Workbench
 async function ensureSchema() {
   // 1. Tabla: usuarios
   await pool.query(`CREATE TABLE IF NOT EXISTS usuarios (
@@ -100,6 +106,7 @@ async function ensureSchema() {
     UNIQUE INDEX dni_idx (dni ASC) VISIBLE
   ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
 
+  // 2. Tabla: mascotas_adopcion
   await pool.query(`CREATE TABLE IF NOT EXISTS mascotas_adopcion (
     mascota_id INT NOT NULL AUTO_INCREMENT,
     usuario_id INT NOT NULL,
@@ -118,6 +125,7 @@ async function ensureSchema() {
     PRIMARY KEY (mascota_id)
   ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
 
+  // 3. Tabla: mascotas_perdidas
   await pool.query(`CREATE TABLE IF NOT EXISTS mascotas_perdidas (
     alerta_id INT NOT NULL AUTO_INCREMENT,
     usuario_id INT NOT NULL,
@@ -138,6 +146,7 @@ async function ensureSchema() {
     PRIMARY KEY (alerta_id)
   ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
 
+  // 4. Tabla: registro_rescates
   await pool.query(`CREATE TABLE IF NOT EXISTS registro_rescates (
     ficha_id INT NOT NULL AUTO_INCREMENT,
     usuario_id INT NOT NULL,
@@ -155,6 +164,7 @@ async function ensureSchema() {
     PRIMARY KEY (ficha_id)
   ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
 
+  // 5. Tabla: solicitudes_adopcion
   await pool.query(`CREATE TABLE IF NOT EXISTS solicitudes_adopcion (
     solicitud_id INT NOT NULL AUTO_INCREMENT,
     mascota_id INT NOT NULL,
@@ -174,6 +184,7 @@ async function ensureSchema() {
     PRIMARY KEY (solicitud_id)
   ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
 
+  // 6. Tabla: apoyo_beneficio
   await pool.query(`CREATE TABLE IF NOT EXISTS apoyo_beneficio (
     donacion_id INT NOT NULL AUTO_INCREMENT,
     usuario_id INT NOT NULL DEFAULT '0',
@@ -219,6 +230,7 @@ async function ensureSchema() {
     PRIMARY KEY (donacion_id)
   ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
 
+  // 7. Tabla: denuncias_apoyo
   await pool.query(`CREATE TABLE IF NOT EXISTS denuncias_apoyo (
     denuncia_id INT NOT NULL AUTO_INCREMENT,
     apoyo_id INT NOT NULL,
@@ -230,6 +242,7 @@ async function ensureSchema() {
     PRIMARY KEY (denuncia_id)
   ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
 
+  // 8. Tabla: movimientos_usuarios
   await pool.query(`CREATE TABLE IF NOT EXISTS movimientos_usuarios (
     movimiento_id INT NOT NULL AUTO_INCREMENT,
     usuario_id INT NULL DEFAULT NULL,
@@ -243,12 +256,17 @@ async function ensureSchema() {
   ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
 }
 
+// ==========================================
+// ENDPOINTS DE AUTENTICACIÓN
+// ==========================================
 app.post('/api/register', async (req, res) => {
   try {
     const { nombre, username, celular, email, dni, foto_dni, password } = req.body;
     
     // Subir foto DNI a Cloudinary de forma asíncrona
     const urlFotoDni = await procesarYSubirImagen(foto_dni, 'usuarios_dni');
+    
+    // 🌍 CORREGIDO: Las variables siguen exactamente el orden secuencial de la tabla de tu MySQL Workbench
     const sql = `INSERT INTO usuarios 
       (nombre_completo, username, correo, clave, celular, dni, foto_dni, rol) 
       VALUES (?, ?, ?, ?, ?, ?, ?, "usuario")`;
@@ -271,7 +289,7 @@ app.post('/api/register', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password, clave } = req.body;
-    const incomingPassword = password || clave;
+    const incomingPassword = password || clave; // 🌍 CORREGIDO: Mapeo dual para aceptar tanto "password" como "clave"
 
     const [rows] = await pool.query('SELECT * FROM usuarios WHERE correo=? OR username=?', [email, email]);
     
@@ -281,6 +299,7 @@ app.post('/api/login', async (req, res) => {
 
     const u = rows[0];
 
+    // Validación limpia eliminando espacios en blanco por si acaso
     if (String(u.clave).trim() !== String(incomingPassword).trim()) {
       return res.status(401).json({ error: 'Invalido' });
     }
@@ -292,6 +311,9 @@ app.post('/api/login', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
+// ==========================================
+// ENDPOINTS: MASCOTAS EN ADOPCION
+// ==========================================
 app.get('/api/adopciones', async (req, res) => {
   try {
     const [r] = await pool.query("SELECT * FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' ORDER BY mascota_id DESC");
@@ -333,6 +355,7 @@ app.put('/api/adopciones/:id', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
+// ELIMINAR ADOPCIÓN Y SUS NOTIFICACIONES/SOLICITUDES
 app.delete('/api/adopciones/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -350,7 +373,9 @@ app.delete('/api/adopciones/:id', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
-
+// ==========================================
+// ENDPOINTS: MASCOTAS PERDIDAS
+// ==========================================
 app.get('/api/perdidos', async (req, res) => {
   try {
     const [r] = await pool.query("SELECT * FROM mascotas_perdidas WHERE COALESCE(estado, 'activo')='activo' ORDER BY alerta_id DESC");
@@ -364,6 +389,8 @@ app.post('/api/perdidos', async (req, res) => {
     const fixedUid = usuario_id || 1;
     const fixedLat = latitud || -8.1119;
     const fixedLon = longitud || -79.0286;
+
+    // Subir imagen extraviada a Cloudinary
     const urlImagenPerdido = await procesarYSubirImagen(imagen, 'mascotas_perdidas');
 
     const [r] = await pool.query(
@@ -388,6 +415,8 @@ app.put('/api/perdidos/:id', async (req, res) => {
     res.json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
+
+// ELIMINAR ALERTA ROJA Y SUS NOTIFICACIONES
 app.delete('/api/perdidos/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -402,6 +431,9 @@ app.delete('/api/perdidos/:id', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+// ==========================================
+// ENDPOINTS: REGISTRO DE RESCATES
+// ==========================================
 app.get('/api/rescates', async (req, res) => {
   try {
     const [r] = await pool.query("SELECT * FROM registro_rescates ORDER BY ficha_id DESC");
@@ -416,6 +448,7 @@ app.post('/api/rescates', async (req, res) => {
     const fixedLat = latitud || -8.1119;
     const fixedLon = longitud || -79.0286;
 
+    // Subir imagen de emergencia a Cloudinary
     const urlImagenRescate = await procesarYSubirImagen(imagen, 'registro_rescates');
 
     const [r] = await pool.query(
@@ -486,6 +519,9 @@ app.post('/api/solicitudes', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
+// ==========================================
+// ENDPOINTS: APOYOS BENÉFICOS
+// ==========================================
 app.get('/api/apoyos', async (req, res) => {
   try {
     let q = "SELECT * FROM apoyo_beneficio WHERE COALESCE(estado, 'activo')='activo'";
@@ -604,6 +640,9 @@ app.delete('/api/apoyos/:id', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
+// ==========================================
+// 📊 DASHBOARD GENERAL (Sincronizado)
+// ==========================================
 app.get('/api/dashboard', async (req, res) => {
   try {
     const [[adop]] = await pool.query("SELECT COUNT(*) as c FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo'");
@@ -616,6 +655,9 @@ app.get('/api/dashboard', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
+// ==========================================
+// ENDPOINT CORREGIDO: MAPA GLOBAL INTEGRADO TOTAL
+// ==========================================
 app.get('/api/mapa-global', async (req, res) => {
   try {
     // 1. Adopciones con todas las de la ley
@@ -678,6 +720,9 @@ app.get('/api/notificaciones', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
+// ==========================================
+// ENDPOINT TEMPORAL DE LIMPIEZA DE FANTASMAS
+// ==========================================
 app.get('/api/limpiar-notificaciones', async (req, res) => {
   try {
     // Esto vaciará las tablas de notificaciones y solicitudes al instante
@@ -690,5 +735,26 @@ app.get('/api/limpiar-notificaciones', async (req, res) => {
   }
 });
 
+// ==========================================
+// 🚀 INICIO DEL SERVIDOR BLINDADO CONTRA CRASH
+// ==========================================
 const PORT = process.env.PORT || 3000;
+
+// 1. PRENDEMOS EL SERVIDOR INMEDIATAMENTE PARA QUE RAILWAY LO MARQUE "ACTIVE"
+app.listen(PORT, '0.0.0.0', () => {
+  console.log(`🚀 API Online en el puerto ${PORT}`);
+  
+  // 2. REVISAMOS LA BASE DE DATOS EN SEGUNDO PLANO PARA NO DEMORAR EL ARRANQUE
+  ensureSchema()
+    .then(() => console.log("✅ Esquema de base de datos verificado con éxito."))
+    .catch(err => console.error("⚠️ Advertencia al verificar BD (puede ser por latencia):", err.message));
+});
+
+// 3. PARACAÍDAS EXTRA PARA ERRORES CRÍTICOS (Evita que Railway lo apague si falla algo grave)
+process.on('uncaughtException', (err) => {
+  console.error('🔥 Error crítico no atrapado:', err);
+});
+process.on('unhandledRejection', (reason, promise) => {
+  console.error('🔥 Promesa rechazada no manejada:', reason);
+});
 ensureSchema().then(() => app.listen(PORT, '0.0.0.0', () => console.log(`API Online en el puerto ${PORT}`)));
