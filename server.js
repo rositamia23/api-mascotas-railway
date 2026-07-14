@@ -4,10 +4,17 @@ const cloudinary = require('cloudinary').v2; // ☁️ Soporte de Cloudinary int
 const cors = require('cors');
 require('dotenv').config();
 
-const app = express();
+const app = reportExpressStatus();
+function reportExpressStatus() {
+  const expressApp = express();
+  return expressApp;
+}
+
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
+
+// Desactivar caché para evitar datos obsoletos en la aplicación móvil
 app.use((req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma', 'no-cache');
@@ -22,6 +29,7 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
+// Configuración del Pool de Conexiones a MySQL (Soporta URI maestra y desarrollo local)
 const poolConfig = process.env.DB_URI 
   ? process.env.DB_URI 
   : {
@@ -41,6 +49,7 @@ function handleErr(res, e) {
   res.status(500).json({ error: e.message });
 }
 
+// ☁️ FUNCIÓN MAESTRA MULTIMEDIA: Sube Base64 a Cloudinary y devuelve la URL estable
 async function procesarYSubirImagen(inputImagen, carpetaDestino = 'mascotas_unidas') {
   if (!inputImagen || typeof inputImagen !== 'string' || inputImagen.trim() === '') return '';
   
@@ -85,20 +94,11 @@ app.post('/api/register', async (req, res) => {
     // Subir foto DNI a Cloudinary de forma asíncrona
     const urlFotoDni = await procesarYSubirImagen(foto_dni, 'usuarios_dni');
     
-    // 🌍 CORREGIDO: Las variables siguen exactamente el orden secuencial de la tabla de tu MySQL Workbench
     const sql = `INSERT INTO usuarios 
       (nombre_completo, username, correo, clave, celular, dni, foto_dni, rol) 
       VALUES (?, ?, ?, ?, ?, ?, ?, "usuario")`;
 
-    const [r] = await pool.query(sql, [
-      nombre,       
-      username,     
-      email,       
-      password,     
-      celular,      
-      dni,         
-      urlFotoDni    
-    ]);
+    const [r] = await pool.query(sql, [nombre, username, email, password, celular, dni, urlFotoDni]);
     
     await registrarMovimiento(r.insertId, email, 'REGISTRO', 'usuarios', r.insertId, `Nuevo usuario registrado: ${username}`);
     res.status(201).json({ message: 'Ok', usuario_id: r.insertId });
@@ -108,7 +108,7 @@ app.post('/api/register', async (req, res) => {
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password, clave } = req.body;
-    const incomingPassword = password || clave; // 🌍 CORREGIDO: Mapeo dual para aceptar tanto "password" como "clave"
+    const incomingPassword = password || clave; 
 
     const [rows] = await pool.query('SELECT * FROM usuarios WHERE correo=? OR username=?', [email, email]);
     
@@ -118,7 +118,6 @@ app.post('/api/login', async (req, res) => {
 
     const u = rows[0];
 
-    // Validación limpia eliminando espacios en blanco por si acaso
     if (String(u.clave).trim() !== String(incomingPassword).trim()) {
       return res.status(401).json({ error: 'Invalido' });
     }
@@ -144,7 +143,6 @@ app.post('/api/adopciones', async (req, res) => {
     const fixedLat = latitud || -8.1119;
     const fixedLon = longitud || -79.0286;
 
-    // Subir imagen de mascota a Cloudinary
     const urlImagenMascota = await procesarYSubirImagen(imagen, 'mascotas_adopcion');
 
     const [r] = await pool.query(
@@ -160,8 +158,6 @@ app.post('/api/adopciones', async (req, res) => {
 app.put('/api/adopciones/:id', async (req, res) => {
   try {
     const { nombre, etapa, raza, ubicacion, latitud, longitud, notas, imagen, celular_contacto, usuario_id, usuario_email } = req.body;
-    
-    // Subir o verificar imagen existente
     const urlImagenMascota = await procesarYSubirImagen(imagen, 'mascotas_adopcion');
     
     await pool.query('UPDATE mascotas_adopcion SET nombre=?, etapa=?, raza=?, ubicacion=?, latitud=?, longitud=?, notas=?, imagen=?, celular_contacto=? WHERE mascota_id=?', [nombre, etapa, raza, ubicacion, latitud, longitud, notas, urlImagenMascota, celular_contacto, req.params.id]);
@@ -178,9 +174,7 @@ app.delete('/api/adopciones/:id', async (req, res) => {
     await pool.query('DELETE FROM movimientos_usuarios WHERE entidad_id = ? AND (accion LIKE "%Adopción%" OR entidad = "adopcion")', [id]);
     await pool.query('DELETE FROM mascotas_adopcion WHERE mascota_id = ?', [id]);
     res.json({ message: 'Mascota y notificaciones eliminadas correctamente' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { handleErr(res, error); }
 });
 
 app.get('/api/perdidos', async (req, res) => {
@@ -197,7 +191,6 @@ app.post('/api/perdidos', async (req, res) => {
     const fixedLat = latitud || -8.1119;
     const fixedLon = longitud || -79.0286;
 
-    // Subir imagen extraviada a Cloudinary
     const urlImagenPerdido = await procesarYSubirImagen(imagen, 'mascotas_perdidas');
 
     const [r] = await pool.query(
@@ -213,7 +206,6 @@ app.post('/api/perdidos', async (req, res) => {
 app.put('/api/perdidos/:id', async (req, res) => {
   try {
     const { nombre, raza, celular, dueno, ubicacion, notas, latitud, longitud, imagen, recompensa, usuario_id, usuario_email } = req.body;
-    
     const urlImagenPerdido = await procesarYSubirImagen(imagen, 'mascotas_perdidas');
     
     await pool.query('UPDATE mascotas_perdidas SET nombre=?, raza=?, celular=?, dueno=?, ubicacion=?, notas=?, latitud=?, longitud=?, imagen=?, recompensa=? WHERE alerta_id=?', [nombre, raza, celular, dueno, ubicacion, notas, latitud, longitud, urlImagenPerdido, recompensa, req.params.id]);
@@ -223,18 +215,14 @@ app.put('/api/perdidos/:id', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
-// ELIMINAR ALERTA ROJA Y SUS NOTIFICACIONES (Borrado en Cadena)
 app.delete('/api/perdidos/:id', async (req, res) => {
   const { id } = req.params;
   try {
     await pool.query('DELETE FROM movimientos_usuarios WHERE entidad_id = ? AND (accion LIKE "%Alerta%" OR entidad = "perdido")', [id]);
     await pool.query('DELETE FROM mascotas_perdidas WHERE alerta_id = ?', [id]);
     res.json({ message: 'Alerta y notificaciones eliminadas correctamente' });
-  } catch (error) {
-    res.status(500).json({ error: error.message });
-  }
+  } catch (error) { handleErr(res, error); }
 });
-
 app.get('/api/rescates', async (req, res) => {
   try {
     const [r] = await pool.query("SELECT * FROM registro_rescates ORDER BY ficha_id DESC");
@@ -249,7 +237,6 @@ app.post('/api/rescates', async (req, res) => {
     const fixedLat = latitud || -8.1119;
     const fixedLon = longitud || -79.0286;
 
-    // Subir imagen de emergencia a Cloudinary
     const urlImagenRescate = await procesarYSubirImagen(imagen, 'registro_rescates');
 
     const [r] = await pool.query(
@@ -265,7 +252,6 @@ app.post('/api/rescates', async (req, res) => {
 app.put('/api/rescates/:id', async (req, res) => {
   try {
     const { nombre, especie, estado_clinico, ubicacion, notas, latitud, longitud, imagen, celular_contacto, usuario_id, usuario_email } = req.body;
-    
     const urlImagenRescate = await procesarYSubirImagen(imagen, 'registro_rescates');
     
     await pool.query(
@@ -285,8 +271,7 @@ app.delete('/api/rescates/:id', async (req, res) => {
     if(rows.length > 0) { uid = rows[0].usuario_id; email = rows[0].usuario_email; }
 
     await pool.query("DELETE FROM registro_rescates WHERE ficha_id=?", [req.params.id]);
-    
-    await registrarMovimiento(uid, email, 'ELIMINAR', 'registro_rescates', req.params.id, `Eliminó físicamente de la base de datos el caso clínico id: ${req.params.id}`);
+    await registrarMovimiento(uid, email, 'ELIMINAR', 'registro_rescates', req.params.id, `Eliminó físicamente caso clínico id: ${req.params.id}`);
     res.json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
@@ -396,7 +381,7 @@ app.post('/api/apoyos', async (req, res) => {
 app.put('/api/apoyos/revision/:id', async (req, res) => {
   try {
     await pool.query('UPDATE apoyo_beneficio SET estado_revision=? WHERE donacion_id=?', [req.body.estado_revision, req.params.id]);
-    await registrarMovimiento(1, 'admin@mascotas.com', 'REVISIÓN', 'apoyo_beneficio', req.params.id, `Cambió estado de revisión de la campaña a: ${req.body.estado_revision}`);
+    await registrarMovimiento(1, 'admin@mascotas.com', 'REVISIÓN', 'apoyo_beneficio', req.params.id, `Cambió estado de revisión a: ${req.body.estado_revision}`);
     res.json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
@@ -422,41 +407,42 @@ app.get('/api/dashboard', async (req, res) => {
 
 app.get('/api/mapa-global', async (req, res) => {
   try {
-    // 1. Adopciones complemetarias
+    // 1. Adopciones
     const [adopciones] = await pool.query(`
       SELECT 
-        mascota_id as id, 'adopcion' as tipo, nombre, raza, etapa, ubicacion, 
-        latitud, longitud, notas, imagen, usuario_email, fecha_publicacion as fecha, 
-        estado, celular_contacto as celular,
+        mascota_id as id, 'adopcion' as tipo, nombre, etapa, raza, ubicacion, latitud, longitud, notas, 
+        imagen, usuario_email, fecha_publicacion as fecha, estado, celular_contacto,
         raza as detalles_raza, etapa as detalles_etapa, estado as detalles_estado
       FROM mascotas_adopcion WHERE estado = 'activo'
     `);
     
+    // 2. Perdidos 
     const [perdidos] = await pool.query(`
       SELECT 
-        alerta_id as id, 'perdido' as tipo, nombre, raza, dueno, ubicacion, 
-        latitud, longitud, notas, imagen, usuario_email, fecha_publicacion as fecha, 
-        fecha_extravio, recompensa, estado, celular,
+        alerta_id as id, 'perdido' as tipo, nombre, raza, celular as celular_contacto, dueno, 
+        fecha_extravio, ubicacion, notas, latitud, longitud, imagen, usuario_email, 
+        recompensa, fecha_publicacion as fecha, estado,
         raza as detalles_raza, dueno as detalles_dueno, fecha_extravio as detalles_fecha_extravio, recompensa as detalles_recompensa
       FROM mascotas_perdidas WHERE estado = 'activo'
     `);
     
     const [rescates] = await pool.query(`
       SELECT 
-        ficha_id as id, 'rescate' as tipo, nombre, especie, estado_clinico, ubicacion, 
-        latitud, longitud, notas, imagen, usuario_email, fecha_publicacion as fecha, 
-        celular_contacto as celular,
+        ficha_id as id, 'rescate' as tipo, nombre, especie, estado_clinico, ubicacion, notas, 
+        latitud, longitud, imagen, usuario_email, celular_contacto, fecha_publicacion as fecha,
         especie as detalles_especie, estado_clinico as detalles_estado_clinico
       FROM registro_rescates
     `);
     
     const [apoyos] = await pool.query(`
       SELECT 
-        donacion_id as id, 'apoyo' as tipo, titulo as nombre, nombre_mascota, motivo_ayuda, 
-        tipo_apoyo, historia as notas, meta_recaudacion, monto_recaudado, monto_meta, 
-        monto_objetivo, ubicacion, latitud, longitud, imagen_mascota as imagen, 
-        estado_revision, enlace_redes, enlace_documento, usuario_email, fecha_publicacion as fecha, 
-        telefono_solicitante as celular, contacto as dueno,
+        donacion_id as id, 'apoyo' as tipo, nombre_solicitante, dni_solicitante, correo_solicitante, 
+        telefono_solicitante, motivo_ayuda, historia as notas, meta_recaudacion, monto_recaudado, 
+        ubicacion, latitud, longitud, imagen_mascota as imagen, documento_respaldo, comprobantes_gasto, 
+        estado_revision, foto_dni, titulo as nombre, descripcion, nombre_mascota, tipo_apoyo, 
+        numero_contacto as celular_contacto, contacto as dueno, fotos_mascota, tipo_documento_respaldo, 
+        evidencia_rescatista, enlace_redes, monto_meta, monto_objetivo, comprobantes_uso, estado, 
+        usuario_email, fecha_publicacion as fecha, enlace_documento,
         nombre_mascota as detalles_nombre_mascota, motivo_ayuda as detalles_motivo_ayuda, tipo_apoyo as detalles_tipo_apoyo,
         meta_recaudacion as detalles_meta_recaudacion, monto_recaudado as detalles_monto_recaudado,
         monto_meta as detalles_monto_meta, monto_objetivo as detalles_monto_objetivo, enlace_redes as detalles_enlace_redes, enlace_documento as detalles_enlace_documento
@@ -466,7 +452,7 @@ app.get('/api/mapa-global', async (req, res) => {
     const mapaGlobal = [...adopciones, ...perdidos, ...rescates, ...apoyos];
     res.json(mapaGlobal);
   } catch (e) { 
-    console.error("Error en mapa-global:", e);
+    console.error("Error mapa-global:", e);
     res.status(500).json({ error: e.message }); 
   }
 });
@@ -483,16 +469,12 @@ app.get('/api/limpiar-notificaciones', async (req, res) => {
   try {
     await pool.query('TRUNCATE TABLE movimientos_usuarios');
     await pool.query('TRUNCATE TABLE solicitudes_adopcion');
-    res.send('<h1 style="color: green; text-align: center; margin-top: 50px;">¡Limpieza exitosa! 🧹<br>Las notificaciones fantasma han sido eliminadas. Ya puedes cerrar esta ventana y revisar tu app en Flutter.</h1>');
-  } catch (error) {
-    res.status(500).send('<h1 style="color: red;">Error en la limpieza: ' + error.message + '</h1>');
-  }
+    res.send('<h1 style="color: green; text-align: center; margin-top: 50px;">¡Limpieza exitosa! 🧹</h1>');
+  } catch (error) { res.status(500).send('Error'); }
 });
+
 const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API Online en el puerto ${PORT}`));
 
-app.listen(PORT, '0.0.0.0', () => {
-  console.log(`🚀 API Online en el puerto ${PORT}`);
-});
-
-process.on('uncaughtException', (err) => { console.error('🔥 Error crítico:', err); });
-process.on('unhandledRejection', (reason, p) => { console.error('🔥 Promesa rechazada:', reason); });
+process.on('uncaughtException', (err) => console.error(err));
+process.on('unhandledRejection', (err) => console.error(err));
