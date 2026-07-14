@@ -8,8 +8,6 @@ const app = express();
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
 app.use(express.urlencoded({ limit: '50mb', extended: true }));
-
-// Desactivar caché para evitar datos obsoletos en la aplicación móvil
 app.use((req, res, next) => {
   res.set('Cache-Control', 'no-store, no-cache, must-revalidate, proxy-revalidate');
   res.set('Pragma', 'no-cache');
@@ -24,7 +22,6 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// Configuración del Pool de Conexiones a MySQL (Soporta URI maestra y desarrollo local)
 const poolConfig = process.env.DB_URI 
   ? process.env.DB_URI 
   : {
@@ -44,7 +41,6 @@ function handleErr(res, e) {
   res.status(500).json({ error: e.message });
 }
 
-// ☁️ FUNCIÓN MAESTRA MULTIMEDIA: Sube Base64 a Cloudinary y devuelve la URL estable
 async function procesarYSubirImagen(inputImagen, carpetaDestino = 'mascotas_unidas') {
   if (!inputImagen || typeof inputImagen !== 'string' || inputImagen.trim() === '') return '';
   
@@ -70,7 +66,6 @@ async function procesarYSubirImagen(inputImagen, carpetaDestino = 'mascotas_unid
   }
 }
 
-// 👇 FUNCIÓN MAESTRA DE AUDITORÍA: Guarda el historial de acciones del usuario en la base de datos 👇
 async function registrarMovimiento(usuario_id, usuario_email, accion, entidad, entidad_id, detalle) {
   try {
     const sql = `INSERT INTO movimientos_usuarios 
@@ -83,182 +78,6 @@ async function registrarMovimiento(usuario_id, usuario_email, accion, entidad, e
   }
 }
 
-// Inicialización del esquema de base de datos exacto de tu Workbench
-async function ensureSchema() {
-  // 1. Tabla: usuarios
-  await pool.query(`CREATE TABLE IF NOT EXISTS usuarios (
-    usuario_id INT NOT NULL AUTO_INCREMENT,
-    nombre_completo VARCHAR(100) NOT NULL,
-    username VARCHAR(50) NOT NULL,
-    correo VARCHAR(100) NOT NULL,
-    clave VARCHAR(100) NOT NULL,
-    celular VARCHAR(20) NOT NULL,
-    dni VARCHAR(20) NOT NULL,
-    foto_dni LONGTEXT NOT NULL,
-    rol VARCHAR(20) NULL DEFAULT 'usuario',
-    foto_perfil LONGTEXT NULL DEFAULT NULL,
-    estado VARCHAR(30) NULL DEFAULT 'activo',
-    creado_en DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
-    ultimo_movimiento DATETIME NULL DEFAULT NULL,
-    PRIMARY KEY (usuario_id),
-    UNIQUE INDEX username_idx (username ASC) VISIBLE,
-    UNIQUE INDEX correo_idx (correo ASC) VISIBLE,
-    UNIQUE INDEX dni_idx (dni ASC) VISIBLE
-  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
-
-  // 2. Tabla: mascotas_adopcion
-  await pool.query(`CREATE TABLE IF NOT EXISTS mascotas_adopcion (
-    mascota_id INT NOT NULL AUTO_INCREMENT,
-    usuario_id INT NOT NULL,
-    nombre VARCHAR(50) NOT NULL,
-    etapa VARCHAR(20) NOT NULL,
-    raza VARCHAR(50) NOT NULL,
-    ubicacion VARCHAR(255) NOT NULL,
-    latitud DOUBLE NOT NULL,
-    longitud DOUBLE NOT NULL,
-    notas TEXT NULL DEFAULT NULL,
-    imagen LONGTEXT NULL DEFAULT NULL,
-    usuario_email VARCHAR(255) NULL DEFAULT NULL,
-    fecha_publicacion DATE NULL DEFAULT NULL,
-    estado VARCHAR(40) NULL DEFAULT 'activo',
-    celular_contacto VARCHAR(20) NULL DEFAULT NULL,
-    PRIMARY KEY (mascota_id)
-  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
-
-  // 3. Tabla: mascotas_perdidas
-  await pool.query(`CREATE TABLE IF NOT EXISTS mascotas_perdidas (
-    alerta_id INT NOT NULL AUTO_INCREMENT,
-    usuario_id INT NOT NULL,
-    nombre VARCHAR(50) NOT NULL,
-    raza VARCHAR(50) NOT NULL,
-    celular VARCHAR(20) NOT NULL,
-    dueno VARCHAR(50) NOT NULL,
-    fecha_extravio DATE NOT NULL,
-    ubicacion VARCHAR(255) NOT NULL,
-    notas TEXT NULL DEFAULT NULL,
-    latitud DOUBLE NOT NULL,
-    longitud DOUBLE NOT NULL,
-    imagen LONGTEXT NULL DEFAULT NULL,
-    usuario_email VARCHAR(255) NULL DEFAULT NULL,
-    recompensa VARCHAR(100) NULL DEFAULT 'No especificada',
-    fecha_publicacion DATE NULL DEFAULT NULL,
-    estado VARCHAR(40) NULL DEFAULT 'activo',
-    PRIMARY KEY (alerta_id)
-  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
-
-  // 4. Tabla: registro_rescates
-  await pool.query(`CREATE TABLE IF NOT EXISTS registro_rescates (
-    ficha_id INT NOT NULL AUTO_INCREMENT,
-    usuario_id INT NOT NULL,
-    nombre VARCHAR(50) NOT NULL,
-    especie VARCHAR(50) NOT NULL,
-    estado_clinico VARCHAR(100) NOT NULL,
-    ubicacion VARCHAR(255) NOT NULL,
-    notas TEXT NULL DEFAULT NULL,
-    latitud DOUBLE NOT NULL,
-    longitud DOUBLE NOT NULL,
-    imagen LONGTEXT NULL DEFAULT NULL,
-    usuario_email VARCHAR(255) NULL DEFAULT NULL,
-    celular_contacto VARCHAR(20) NULL DEFAULT NULL,
-    fecha_publicacion DATE NULL DEFAULT NULL,
-    PRIMARY KEY (ficha_id)
-  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
-
-  // 5. Tabla: solicitudes_adopcion
-  await pool.query(`CREATE TABLE IF NOT EXISTS solicitudes_adopcion (
-    solicitud_id INT NOT NULL AUTO_INCREMENT,
-    mascota_id INT NOT NULL,
-    nombre_mascota VARCHAR(100) NOT NULL,
-    usuario_solicitante VARCHAR(255) NOT NULL,
-    correo_solicitante VARCHAR(100) NOT NULL,
-    telefono_solicitante VARCHAR(20) NOT NULL,
-    fecha TIMESTAMP NULL DEFAULT CURRENT_TIMESTAMP,
-    nombre_solicitante VARCHAR(150) NULL DEFAULT NULL,
-    dni_solicitante VARCHAR(20) NULL DEFAULT NULL,
-    numero_solicitante VARCHAR(20) NULL DEFAULT NULL,
-    vivienda VARCHAR(120) NULL DEFAULT NULL,
-    experiencia TEXT NULL DEFAULT NULL,
-    estado VARCHAR(40) NULL DEFAULT 'pendiente',
-    fecha_solicitud DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
-    usuario_id INT NULL DEFAULT NULL,
-    PRIMARY KEY (solicitud_id)
-  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
-
-  // 6. Tabla: apoyo_beneficio
-  await pool.query(`CREATE TABLE IF NOT EXISTS apoyo_beneficio (
-    donacion_id INT NOT NULL AUTO_INCREMENT,
-    usuario_id INT NOT NULL DEFAULT '0',
-    nombre_solicitante VARCHAR(150) NOT NULL DEFAULT '',
-    dni_solicitante VARCHAR(20) NOT NULL DEFAULT '',
-    correo_solicitante VARCHAR(100) NOT NULL DEFAULT '',
-    telefono_solicitante VARCHAR(20) NOT NULL DEFAULT '',
-    motivo_ayuda VARCHAR(120) NOT NULL DEFAULT '',
-    historia TEXT NOT NULL,
-    meta_recaudacion DECIMAL(10,2) NOT NULL DEFAULT '0.00',
-    monto_recaudado DECIMAL(10,2) NOT NULL DEFAULT '0.00',
-    ubicacion VARCHAR(255) NOT NULL DEFAULT '',
-    latitud DOUBLE NULL DEFAULT NULL,
-    longitud DOUBLE NULL DEFAULT NULL,
-    imagen_mascota LONGTEXT NOT NULL,
-    documento_respaldo LONGTEXT NOT NULL,
-    comprobantes_gasto LONGTEXT NOT NULL,
-    estado_revision VARCHAR(30) NOT NULL DEFAULT 'pendiente',
-    motivo_rechazo TEXT NULL DEFAULT NULL,
-    denuncias_count INT NOT NULL DEFAULT '0',
-    foto_dni LONGTEXT NOT NULL,
-    titulo VARCHAR(255) NOT NULL DEFAULT '',
-    descripcion TEXT NOT NULL,
-    nombre_mascota VARCHAR(100) NOT NULL DEFAULT '',
-    tipo_apoyo VARCHAR(100) NOT NULL DEFAULT '',
-    numero_contacto VARCHAR(20) NOT NULL DEFAULT '',
-    contacto VARCHAR(150) NOT NULL DEFAULT '',
-    imagen LONGTEXT NOT NULL,
-    fotos_mascota LONGTEXT NOT NULL,
-    tipo_documento_respaldo VARCHAR(100) NOT NULL DEFAULT '',
-    evidencia_rescatista LONGTEXT NOT NULL,
-    enlace_redes VARCHAR(255) NOT NULL DEFAULT '',
-    monto_meta VARCHAR(100) NOT NULL DEFAULT '',
-    monto_objetivo VARCHAR(100) NOT NULL DEFAULT '',
-    comprobantes_uso LONGTEXT NOT NULL,
-    actualizaciones TEXT NULL DEFAULT NULL,
-    estado VARCHAR(30) NOT NULL DEFAULT 'activo',
-    usuario_email VARCHAR(255) NOT NULL DEFAULT '',
-    fecha_publicacion DATE NULL DEFAULT NULL,
-    creado_en DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
-    actualizado_en DATETIME NULL DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP,
-    enlace_documento VARCHAR(500) NOT NULL DEFAULT '',
-    PRIMARY KEY (donacion_id)
-  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
-
-  // 7. Tabla: denuncias_apoyo
-  await pool.query(`CREATE TABLE IF NOT EXISTS denuncias_apoyo (
-    denuncia_id INT NOT NULL AUTO_INCREMENT,
-    apoyo_id INT NOT NULL,
-    usuario_id INT NULL DEFAULT NULL,
-    usuario_email VARCHAR(255) NULL DEFAULT NULL,
-    motivo VARCHAR(255) NOT NULL,
-    detalle TEXT NULL DEFAULT NULL,
-    fecha_denuncia DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (denuncia_id)
-  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
-
-  // 8. Tabla: movimientos_usuarios
-  await pool.query(`CREATE TABLE IF NOT EXISTS movimientos_usuarios (
-    movimiento_id INT NOT NULL AUTO_INCREMENT,
-    usuario_id INT NULL DEFAULT NULL,
-    usuario_email VARCHAR(255) NULL DEFAULT NULL,
-    accion VARCHAR(80) NOT NULL,
-    entidad VARCHAR(80) NULL DEFAULT NULL,
-    entidad_id INT NULL DEFAULT NULL,
-    detalle TEXT NULL DEFAULT NULL,
-    fecha_movimiento DATETIME NULL DEFAULT CURRENT_TIMESTAMP,
-    PRIMARY KEY (movimiento_id)
-  ) ENGINE = InnoDB DEFAULT CHARACTER SET = utf8mb4;`);
-}
-
-// ==========================================
-// ENDPOINTS DE AUTENTICACIÓN
-// ==========================================
 app.post('/api/register', async (req, res) => {
   try {
     const { nombre, username, celular, email, dni, foto_dni, password } = req.body;
@@ -272,13 +91,13 @@ app.post('/api/register', async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, "usuario")`;
 
     const [r] = await pool.query(sql, [
-      nombre,       // 1. nombre_completo
-      username,     // 2. username
-      email,        // 3. correo
-      password,     // 4. clave
-      celular,      // 5. celular
-      dni,          // 6. dni
-      urlFotoDni    // 7. foto_dni
+      nombre,       
+      username,     
+      email,       
+      password,     
+      celular,      
+      dni,         
+      urlFotoDni    
     ]);
     
     await registrarMovimiento(r.insertId, email, 'REGISTRO', 'usuarios', r.insertId, `Nuevo usuario registrado: ${username}`);
@@ -311,9 +130,6 @@ app.post('/api/login', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
-// ==========================================
-// ENDPOINTS: MASCOTAS EN ADOPCION
-// ==========================================
 app.get('/api/adopciones', async (req, res) => {
   try {
     const [r] = await pool.query("SELECT * FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' ORDER BY mascota_id DESC");
@@ -355,28 +171,18 @@ app.put('/api/adopciones/:id', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
-// ELIMINAR ADOPCIÓN Y SUS NOTIFICACIONES/SOLICITUDES
 app.delete('/api/adopciones/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    // 1. Borramos las solicitudes de adopción ligadas a esta mascota
     await pool.query('DELETE FROM solicitudes_adopcion WHERE mascota_id = ?', [id]);
-    
-    // 2. Borramos las notificaciones en la campanita
     await pool.query('DELETE FROM movimientos_usuarios WHERE entidad_id = ? AND (accion LIKE "%Adopción%" OR entidad = "adopcion")', [id]);
-    
-    // 3. Finalmente, borramos la mascota
     await pool.query('DELETE FROM mascotas_adopcion WHERE mascota_id = ?', [id]);
-    
     res.json({ message: 'Mascota y notificaciones eliminadas correctamente' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// ==========================================
-// ENDPOINTS: MASCOTAS PERDIDAS
-// ==========================================
 app.get('/api/perdidos', async (req, res) => {
   try {
     const [r] = await pool.query("SELECT * FROM mascotas_perdidas WHERE COALESCE(estado, 'activo')='activo' ORDER BY alerta_id DESC");
@@ -417,25 +223,18 @@ app.put('/api/perdidos/:id', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
-// ELIMINAR ALERTA ROJA Y SUS NOTIFICACIONES
+// ELIMINAR ALERTA ROJA Y SUS NOTIFICACIONES (Borrado en Cadena)
 app.delete('/api/perdidos/:id', async (req, res) => {
   const { id } = req.params;
   try {
-    // 1. Borramos las notificaciones en la campanita
     await pool.query('DELETE FROM movimientos_usuarios WHERE entidad_id = ? AND (accion LIKE "%Alerta%" OR entidad = "perdido")', [id]);
-    
-    // 2. Borramos la alerta de la mascota
     await pool.query('DELETE FROM mascotas_perdidas WHERE alerta_id = ?', [id]);
-    
     res.json({ message: 'Alerta y notificaciones eliminadas correctamente' });
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// ==========================================
-// ENDPOINTS: REGISTRO DE RESCATES
-// ==========================================
 app.get('/api/rescates', async (req, res) => {
   try {
     const [r] = await pool.query("SELECT * FROM registro_rescates ORDER BY ficha_id DESC");
@@ -492,9 +291,6 @@ app.delete('/api/rescates/:id', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
-// ==========================================
-// ENDPOINTS: SOLICITUDES DE ADOPCION
-// ==========================================
 app.get('/api/solicitudes', async (req, res) => {
   try {
     const [r] = await pool.query("SELECT * FROM solicitudes_adopcion ORDER BY solicitud_id DESC");
@@ -521,9 +317,6 @@ app.post('/api/solicitudes', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
-// ==========================================
-// ENDPOINTS: APOYOS BENÉFICOS
-// ==========================================
 app.get('/api/apoyos', async (req, res) => {
   try {
     let q = "SELECT * FROM apoyo_beneficio WHERE COALESCE(estado, 'activo')='activo'";
@@ -574,7 +367,7 @@ app.post('/api/apoyos', async (req, res) => {
     const urlComprobantesUso = await procesarYSubirImagen(req.body.comprobantes_uso, 'apoyos_documentos');
     
     const sql = `INSERT INTO apoyo_beneficio 
-      (usuario_id, nombre_solicitante, dni_solicitante, correo_solicitante, telefono_solicitante, 
+      (usuario_id, nombre_solicitante, dni_solicitante, correo_solicitante, telephone_solicitante, 
        motivo_ayuda, historia, meta_recaudacion, monto_recaudado, ubicacion, 
        latitud, longitud, imagen_mascota, documento_respaldo, comprobantes_gasto, 
        estado_revision, motivo_rechazo, denuncias_count, foto_dni, titulo, 
@@ -585,40 +378,13 @@ app.post('/api/apoyos', async (req, res) => {
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 0, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NULL, 'activo', ?, ?, ?)`;
       
     const values = [
-      userId,
-      req.body.nombre_solicitante || '',
-      req.body.dni_solicitante || '',
-      emailSol,
-      req.body.telefono_solicitante || '',
-      req.body.motivo_ayuda || '',
-      req.body.historia || '',
-      metaRecaudacion,
-      parseFloat(req.body.monto_recaudado) || 0.00,
-      req.body.ubicacion || 'La Libertad, Perú',
-      parseFloat(req.body.latitud) || -8.1119,
-      parseFloat(req.body.longitud) || -79.0286,
-      urlImagenMascota,
-      urlDocumentoRespaldo,
-      urlComprobantesGasto,
-      req.body.estado_revision || 'pendiente',
-      urlFotoDni,
-      req.body.titulo || 'Campaña',
-      req.body.descripcion || req.body.historia || '',
-      req.body.nombre_mascota || 'Mascota',
-      req.body.tipo_apoyo || 'DINERO',
-      req.body.numero_contacto || '',
-      req.body.contacto || '',
-      urlImagenGeneral,
-      urlFotosMascota,
-      typeDoc,
-      urlEvidenciaRescatista,
-      linkRedes,
-      metaAdd,
-      objEsp,
-      urlComprobantesUso,
-      emailSol,
-      req.body.fecha_publicacion || null,
-      driveDoc
+      userId, req.body.nombre_solicitante || '', req.body.dni_solicitante || '', emailSol, req.body.telefono_solicitante || '',
+      req.body.motivo_ayuda || '', req.body.historia || '', metaRecaudacion, parseFloat(req.body.monto_recaudado) || 0.00,
+      req.body.ubicacion || 'La Libertad, Perú', parseFloat(req.body.latitud) || -8.1119, parseFloat(req.body.longitud) || -79.0286,
+      urlImagenMascota, urlDocumentoRespaldo, urlComprobantesGasto, req.body.estado_revision || 'pendiente', urlFotoDni,
+      req.body.titulo || 'Campaña', req.body.descripcion || req.body.historia || '', req.body.nombre_mascota || 'Mascota',
+      req.body.tipo_apoyo || 'DINERO', req.body.numero_contacto || '', req.body.contacto || '', urlImagenGeneral, urlFotosMascota,
+      typeDoc, urlEvidenciaRescatista, linkRedes, metaAdd, objEsp, urlComprobantesUso, emailSol, req.body.fecha_publicacion || null, driveDoc
     ];
     
     const [r] = await pool.query(sql, values);
@@ -642,9 +408,6 @@ app.delete('/api/apoyos/:id', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
-// ==========================================
-// 📊 DASHBOARD GENERAL (Sincronizado)
-// ==========================================
 app.get('/api/dashboard', async (req, res) => {
   try {
     const [[adop]] = await pool.query("SELECT COUNT(*) as c FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo'");
@@ -657,12 +420,9 @@ app.get('/api/dashboard', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
-// ==========================================
-// ENDPOINT CORREGIDO: MAPA GLOBAL INTEGRADO TOTAL
-// ==========================================
 app.get('/api/mapa-global', async (req, res) => {
   try {
-    // 1. Adopciones con todas las de la ley
+    // 1. Adopciones complemetarias
     const [adopciones] = await pool.query(`
       SELECT 
         mascota_id as id, 'adopcion' as tipo, nombre, raza, etapa, ubicacion, 
@@ -672,7 +432,6 @@ app.get('/api/mapa-global', async (req, res) => {
       FROM mascotas_adopcion WHERE estado = 'activo'
     `);
     
-    // 2. Perdidos con todos sus campos
     const [perdidos] = await pool.query(`
       SELECT 
         alerta_id as id, 'perdido' as tipo, nombre, raza, dueno, ubicacion, 
@@ -682,7 +441,6 @@ app.get('/api/mapa-global', async (req, res) => {
       FROM mascotas_perdidas WHERE estado = 'activo'
     `);
     
-    // 3. Rescates completos
     const [rescates] = await pool.query(`
       SELECT 
         ficha_id as id, 'rescate' as tipo, nombre, especie, estado_clinico, ubicacion, 
@@ -692,7 +450,6 @@ app.get('/api/mapa-global', async (req, res) => {
       FROM registro_rescates
     `);
     
-    // 4. Apoyos con todo el detalle de montos
     const [apoyos] = await pool.query(`
       SELECT 
         donacion_id as id, 'apoyo' as tipo, titulo as nombre, nombre_mascota, motivo_ayuda, 
@@ -722,39 +479,20 @@ app.get('/api/notificaciones', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
-// ==========================================
-// ENDPOINT TEMPORAL DE LIMPIEZA DE FANTASMAS
-// ==========================================
 app.get('/api/limpiar-notificaciones', async (req, res) => {
   try {
-    // Esto vaciará las tablas de notificaciones y solicitudes al instante
     await pool.query('TRUNCATE TABLE movimientos_usuarios');
     await pool.query('TRUNCATE TABLE solicitudes_adopcion');
-    
     res.send('<h1 style="color: green; text-align: center; margin-top: 50px;">¡Limpieza exitosa! 🧹<br>Las notificaciones fantasma han sido eliminadas. Ya puedes cerrar esta ventana y revisar tu app en Flutter.</h1>');
   } catch (error) {
     res.status(500).send('<h1 style="color: red;">Error en la limpieza: ' + error.message + '</h1>');
   }
 });
-
 const PORT = process.env.PORT || 3000;
 
-// 🚀 INICIALIZACIÓN ASÍNCRONA BLINDADA: Primero abrimos el puerto de inmediato para Railway
 app.listen(PORT, '0.0.0.0', () => {
   console.log(`🚀 API Online en el puerto ${PORT}`);
-  
-  // Ejecutamos la verificación de tablas en segundo plano sin bloquear el arranque principal
-  setImmediate(() => {
-    ensureSchema()
-      .then(() => console.log("✅ Esquema de base de datos verificado con éxito."))
-      .catch(err => console.error("⚠️ Advertencia al verificar el esquema:", err.message));
-  });
 });
 
-// Paracaídas global para atrapar cualquier hilo suelto y que nunca crashee la instancia
-process.on('uncaughtException', (err) => {
-  console.error('🔥 Capturado uncaughtException:', err);
-});
-process.on('unhandledRejection', (reason, p) => {
-  console.error('🔥 Capturado unhandledRejection:', reason);
-});
+process.on('uncaughtException', (err) => { console.error('🔥 Error crítico:', err); });
+process.on('unhandledRejection', (reason, p) => { console.error('🔥 Promesa rechazada:', reason); });
