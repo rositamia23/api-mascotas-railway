@@ -116,7 +116,7 @@ async function ensureSchema() {
     ubicacion VARCHAR(255) NOT NULL,
     latitud DOUBLE NOT NULL,
     longitud DOUBLE NOT NULL,
-    notes TEXT NULL DEFAULT NULL,
+    notas TEXT NULL DEFAULT NULL,
     imagen LONGTEXT NULL DEFAULT NULL,
     usuario_email VARCHAR(255) NULL DEFAULT NULL,
     fecha_publicacion DATE NULL DEFAULT NULL,
@@ -135,7 +135,7 @@ async function ensureSchema() {
     dueno VARCHAR(50) NOT NULL,
     fecha_extravio DATE NOT NULL,
     ubicacion VARCHAR(255) NOT NULL,
-    notes TEXT NULL DEFAULT NULL,
+    notas TEXT NULL DEFAULT NULL,
     latitud DOUBLE NOT NULL,
     longitud DOUBLE NOT NULL,
     imagen LONGTEXT NULL DEFAULT NULL,
@@ -154,7 +154,7 @@ async function ensureSchema() {
     especie VARCHAR(50) NOT NULL,
     estado_clinico VARCHAR(100) NOT NULL,
     ubicacion VARCHAR(255) NOT NULL,
-    notes TEXT NULL DEFAULT NULL,
+    notas TEXT NULL DEFAULT NULL,
     latitud DOUBLE NOT NULL,
     longitud DOUBLE NOT NULL,
     imagen LONGTEXT NULL DEFAULT NULL,
@@ -373,6 +373,7 @@ app.delete('/api/adopciones/:id', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 // ==========================================
 // ENDPOINTS: MASCOTAS PERDIDAS
 // ==========================================
@@ -395,7 +396,7 @@ app.post('/api/perdidos', async (req, res) => {
 
     const [r] = await pool.query(
       'INSERT INTO mascotas_perdidas (usuario_id, nombre, raza, celular, dueno, fecha_extravio, ubicacion, notas, latitud, longitud, imagen, usuario_email, recompensa, fecha_publicacion, estado) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE(), "activo")', 
-      [fixedUid, nombre, raza, celular, dueno, fecha_extravio, ubicacion, notes, fixedLat, fixedLon, urlImagenPerdido, usuario_email, recompensa]
+      [fixedUid, nombre, raza, celular, dueno, fecha_extravio, ubicacion, notas, fixedLat, fixedLon, urlImagenPerdido, usuario_email, recompensa]
     );
     
     await registrarMovimiento(fixedUid, usuario_email, 'CREAR', 'mascotas_perdidas', r.insertId, `Creó alerta de extravio de ${nombre}`);
@@ -409,7 +410,7 @@ app.put('/api/perdidos/:id', async (req, res) => {
     
     const urlImagenPerdido = await procesarYSubirImagen(imagen, 'mascotas_perdidas');
     
-    await pool.query('UPDATE mascotas_perdidas SET nombre=?, raza=?, celular=?, dueno=?, ubicacion=?, notas=?, latitud=?, longitud=?, imagen=?, recompensa=? WHERE alerta_id=?', [nombre, raza, celular, dueno, ubicacion, notes, latitud, longitud, urlImagenPerdido, recompensa, req.params.id]);
+    await pool.query('UPDATE mascotas_perdidas SET nombre=?, raza=?, celular=?, dueno=?, ubicacion=?, notas=?, latitud=?, longitud=?, imagen=?, recompensa=? WHERE alerta_id=?', [nombre, raza, celular, dueno, ubicacion, notas, latitud, longitud, urlImagenPerdido, recompensa, req.params.id]);
     
     await registrarMovimiento(usuario_id, usuario_email, 'EDITAR', 'mascotas_perdidas', req.params.id, `Actualizó alerta de extravio id: ${req.params.id}`);
     res.json({ message: 'Ok' });
@@ -431,6 +432,7 @@ app.delete('/api/perdidos/:id', async (req, res) => {
     res.status(500).json({ error: error.message });
   }
 });
+
 // ==========================================
 // ENDPOINTS: REGISTRO DE RESCATES
 // ==========================================
@@ -452,8 +454,8 @@ app.post('/api/rescates', async (req, res) => {
     const urlImagenRescate = await procesarYSubirImagen(imagen, 'registro_rescates');
 
     const [r] = await pool.query(
-      'INSERT INTO registro_rescates (usuario_id, nombre, especie, estado_clinico, ubicacion, notes, latitud, longitud, imagen, usuario_email, celular_contacto, fecha_publicacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())', 
-      [fixedUid, nombre, especie, estado_clinico, ubicacion, notes, fixedLat, fixedLon, urlImagenRescate, usuario_email, celular_contacto]
+      'INSERT INTO registro_rescates (usuario_id, nombre, especie, estado_clinico, ubicacion, notas, latitud, longitud, imagen, usuario_email, celular_contacto, fecha_publicacion) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, CURDATE())', 
+      [fixedUid, nombre, especie, estado_clinico, ubicacion, notas, fixedLat, fixedLon, urlImagenRescate, usuario_email, celular_contacto]
     );
     
     await registrarMovimiento(fixedUid, usuario_email, 'CREAR', 'registro_rescates', r.insertId, `Reportó caso de emergencia médica para ${nombre}`);
@@ -468,8 +470,8 @@ app.put('/api/rescates/:id', async (req, res) => {
     const urlImagenRescate = await procesarYSubirImagen(imagen, 'registro_rescates');
     
     await pool.query(
-      'UPDATE registro_rescates SET nombre=?, especie=?, estado_clinico=?, ubicacion=?, notes=?, latitud=?, longitud=?, imagen=?, celular_contacto=? WHERE ficha_id=?', 
-      [nombre, especie, estado_clinico, ubicacion, notes, latitud, longitud, urlImagenRescate, celular_contacto, req.params.id]
+      'UPDATE registro_rescates SET nombre=?, especie=?, estado_clinico=?, ubicacion=?, notas=?, latitud=?, longitud=?, imagen=?, celular_contacto=? WHERE ficha_id=?', 
+      [nombre, especie, estado_clinico, ubicacion, notas, latitud, longitud, urlImagenRescate, celular_contacto, req.params.id]
     );
     
     await registrarMovimiento(usuario_id, usuario_email, 'EDITAR', 'registro_rescates', req.params.id, `Modificó caso clínico id: ${req.params.id}`);
@@ -664,7 +666,7 @@ app.get('/api/mapa-global', async (req, res) => {
     const [adopciones] = await pool.query(`
       SELECT 
         mascota_id as id, 'adopcion' as tipo, nombre, raza, etapa, ubicacion, 
-        latitud, longitud, notes, imagen, usuario_email, fecha_publicacion as fecha, 
+        latitud, longitud, notas, imagen, usuario_email, fecha_publicacion as fecha, 
         estado, celular_contacto as celular,
         raza as detalles_raza, etapa as detalles_etapa, estado as detalles_estado
       FROM mascotas_adopcion WHERE estado = 'activo'
@@ -674,7 +676,7 @@ app.get('/api/mapa-global', async (req, res) => {
     const [perdidos] = await pool.query(`
       SELECT 
         alerta_id as id, 'perdido' as tipo, nombre, raza, dueno, ubicacion, 
-        latitud, longitud, notes, imagen, usuario_email, fecha_publicacion as fecha, 
+        latitud, longitud, notas, imagen, usuario_email, fecha_publicacion as fecha, 
         fecha_extravio, recompensa, estado, celular,
         raza as detalles_raza, dueno as detalles_dueno, fecha_extravio as detalles_fecha_extravio, recompensa as detalles_recompensa
       FROM mascotas_perdidas WHERE estado = 'activo'
@@ -684,7 +686,7 @@ app.get('/api/mapa-global', async (req, res) => {
     const [rescates] = await pool.query(`
       SELECT 
         ficha_id as id, 'rescate' as tipo, nombre, especie, estado_clinico, ubicacion, 
-        latitud, longitud, notes, imagen, usuario_email, fecha_publicacion as fecha, 
+        latitud, longitud, notas, imagen, usuario_email, fecha_publicacion as fecha, 
         celular_contacto as celular,
         especie as detalles_especie, estado_clinico as detalles_estado_clinico
       FROM registro_rescates
@@ -694,7 +696,7 @@ app.get('/api/mapa-global', async (req, res) => {
     const [apoyos] = await pool.query(`
       SELECT 
         donacion_id as id, 'apoyo' as tipo, titulo as nombre, nombre_mascota, motivo_ayuda, 
-        tipo_apoyo, historia as notes, meta_recaudacion, monto_recaudado, monto_meta, 
+        tipo_apoyo, historia as notas, meta_recaudacion, monto_recaudado, monto_meta, 
         monto_objetivo, ubicacion, latitud, longitud, imagen_mascota as imagen, 
         estado_revision, enlace_redes, enlace_documento, usuario_email, fecha_publicacion as fecha, 
         telefono_solicitante as celular, contacto as dueno,
