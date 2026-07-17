@@ -28,7 +28,7 @@ cloudinary.config({
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
-const poolConfig = 'PEGA_AQUÍ_TU_NUEVO_ENLACE_MYSQL_PUBLIC_URL';
+const poolConfig = 'mysql://root:EpuMxJLSsSXUZpFxabPihWbbNXwXFOwb@tokaido.proxy.rlwy.net:53838/railway';
   ? process.env.DB_URI 
   : {
       host: '127.0.0.1',
