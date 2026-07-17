@@ -28,9 +28,7 @@ cloudinary.config({
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
-
-// Configuración del Pool de Conexiones a MySQL (Soporta URI maestra y desarrollo local)
-const poolConfig = process.env.DB_URI 
+const poolConfig = 'PEGA_AQUÍ_TU_NUEVO_ENLACE_MYSQL_PUBLIC_URL';
   ? process.env.DB_URI 
   : {
       host: '127.0.0.1',
