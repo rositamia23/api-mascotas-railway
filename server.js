@@ -28,17 +28,9 @@ cloudinary.config({
   api_key: process.env.CLOUDINARY_API_KEY,
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
+
+// 🟢 AQUÍ ESTÁ LA CORRECCIÓN: Conexión directa y limpia a tu base de datos
 const poolConfig = 'mysql://root:EpuMxJLSsSXUZpFxabPihWbbNXwXFOwb@tokaido.proxy.rlwy.net:53838/railway';
-  ? process.env.DB_URI 
-  : {
-      host: '127.0.0.1',
-      user: 'grupo',
-      password: 'mascotasunidas',
-      database: 'mascotas_unidas',
-      waitForConnections: true,
-      connectionLimit: 5,
-      queueLimit: 0
-    };
 
 const pool = mysql.createPool(poolConfig);
 
@@ -221,6 +213,7 @@ app.delete('/api/perdidos/:id', async (req, res) => {
     res.json({ message: 'Alerta y notificaciones eliminadas correctamente' });
   } catch (error) { handleErr(res, error); }
 });
+
 app.get('/api/rescates', async (req, res) => {
   try {
     const [r] = await pool.query("SELECT * FROM registro_rescates ORDER BY ficha_id DESC");
