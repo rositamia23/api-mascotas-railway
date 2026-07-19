@@ -95,6 +95,7 @@ app.post('/api/register', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
+// 🔴 LOGIN CORREGIDO CON VALIDACIÓN DE RECHAZO
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password, clave } = req.body;
@@ -110,6 +111,14 @@ app.post('/api/login', async (req, res) => {
 
     if (String(u.clave).trim() !== String(incomingPassword).trim()) {
       return res.status(401).json({ error: 'Invalido' });
+    }
+
+    // Bloqueo para cuentas rechazadas con tu mensaje personalizado
+    if (u.estado_verificacion === 'rechazado') {
+      return res.status(403).json({ 
+        error: 'RECHAZADO', 
+        message: 'Revisen que estén bien sus datos y número de DNI para que se vuelvan a registrar.' 
+      });
     }
 
     await pool.query('UPDATE usuarios SET ultimo_movimiento = CURRENT_TIMESTAMP WHERE usuario_id = ?', [u.usuario_id]);
@@ -342,7 +351,6 @@ app.post('/api/apoyos', async (req, res) => {
     const urlEvidenciaRescatista = await procesarYSubirImagen(req.body.evidencia_rescatista, 'apoyos_documentos');
     const urlComprobantesUso = await procesarYSubirImagen(req.body.comprobantes_uso, 'apoyos_documentos');
     
-    // CORRECCIÓN APLICADA: telefono_solicitante
     const sql = `INSERT INTO apoyo_beneficio 
       (usuario_id, nombre_solicitante, dni_solicitante, correo_solicitante, telefono_solicitante, 
        motivo_ayuda, historia, meta_recaudacion, monto_recaudado, ubicacion, 
