@@ -342,8 +342,9 @@ app.post('/api/apoyos', async (req, res) => {
     const urlEvidenciaRescatista = await procesarYSubirImagen(req.body.evidencia_rescatista, 'apoyos_documentos');
     const urlComprobantesUso = await procesarYSubirImagen(req.body.comprobantes_uso, 'apoyos_documentos');
     
+    // CORRECCIÓN APLICADA: telefono_solicitante
     const sql = `INSERT INTO apoyo_beneficio 
-      (usuario_id, nombre_solicitante, dni_solicitante, correo_solicitante, telephone_solicitante, 
+      (usuario_id, nombre_solicitante, dni_solicitante, correo_solicitante, telefono_solicitante, 
        motivo_ayuda, historia, meta_recaudacion, monto_recaudado, ubicacion, 
        latitud, longitud, imagen_mascota, documento_respaldo, comprobantes_gasto, 
        estado_revision, motivo_rechazo, denuncias_count, foto_dni, titulo, 
@@ -402,9 +403,9 @@ app.get('/api/mapa-global', async (req, res) => {
     const [adopciones] = await pool.query(`
       SELECT 
         mascota_id as id, 'adopcion' as tipo, nombre, etapa, raza, ubicacion, latitud, longitud, notas, 
-        imagen, usuario_email, fecha_publicacion as fecha, estado, celular_contacto,
-        raza as detalles_raza, etapa as detalles_etapa, estado as detalles_estado
-      FROM mascotas_adopcion WHERE estado = 'activo'
+        imagen, usuario_email, fecha_publicacion as fecha, COALESCE(estado, 'activo') as estado, celular_contacto,
+        raza as detalles_raza, etapa as detalles_etapa, COALESCE(estado, 'activo') as detalles_estado
+      FROM mascotas_adopcion WHERE COALESCE(estado, 'activo') = 'activo'
     `);
     
     // 2. Perdidos 
@@ -412,9 +413,9 @@ app.get('/api/mapa-global', async (req, res) => {
       SELECT 
         alerta_id as id, 'perdido' as tipo, nombre, raza, celular as celular_contacto, dueno, 
         fecha_extravio, ubicacion, notas, latitud, longitud, imagen, usuario_email, 
-        recompensa, fecha_publicacion as fecha, estado,
+        recompensa, fecha_publicacion as fecha, COALESCE(estado, 'activo') as estado,
         raza as detalles_raza, dueno as detalles_dueno, fecha_extravio as detalles_fecha_extravio, recompensa as detalles_recompensa
-      FROM mascotas_perdidas WHERE estado = 'activo'
+      FROM mascotas_perdidas WHERE COALESCE(estado, 'activo') = 'activo'
     `);
     
     const [rescates] = await pool.query(`
@@ -432,12 +433,12 @@ app.get('/api/mapa-global', async (req, res) => {
         ubicacion, latitud, longitud, imagen_mascota as imagen, documento_respaldo, comprobantes_gasto, 
         estado_revision, foto_dni, titulo as nombre, descripcion, nombre_mascota, tipo_apoyo, 
         numero_contacto as celular_contacto, contacto as dueno, fotos_mascota, tipo_documento_respaldo, 
-        evidencia_rescatista, enlace_redes, monto_meta, monto_objetivo, comprobantes_uso, estado, 
+        evidencia_rescatista, enlace_redes, monto_meta, monto_objetivo, comprobantes_uso, COALESCE(estado, 'activo') as estado, 
         usuario_email, fecha_publicacion as fecha, enlace_documento,
         nombre_mascota as detalles_nombre_mascota, motivo_ayuda as detalles_motivo_ayuda, tipo_apoyo as detalles_tipo_apoyo,
         meta_recaudacion as detalles_meta_recaudacion, monto_recaudado as detalles_monto_recaudado,
         monto_meta as detalles_monto_meta, monto_objetivo as detalles_monto_objetivo, enlace_redes as detalles_enlace_redes, enlace_documento as detalles_enlace_documento
-      FROM apoyo_beneficio WHERE estado_revision = 'aprobado' AND estado = 'activo'
+      FROM apoyo_beneficio WHERE estado_revision = 'aprobado' AND COALESCE(estado, 'activo') = 'activo'
     `);
     
     const mapaGlobal = [...adopciones, ...perdidos, ...rescates, ...apoyos];
