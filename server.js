@@ -464,6 +464,50 @@ app.get('/api/limpiar-notificaciones', async (req, res) => {
     res.send('<h1 style="color: green; text-align: center; margin-top: 50px;">¡Limpieza exitosa! 🧹</h1>');
   } catch (error) { res.status(500).send('Error'); }
 });
+app.get('/api/usuarios/verificacion', async (req, res) => {
+  try {
+    const sql = `
+      SELECT usuario_id, nombre_completo, username, correo, dni, foto_dni, estado_verificacion 
+      FROM usuarios 
+      WHERE estado_verificacion = 'pendiente' 
+      ORDER BY usuario_id ASC
+    `;
+    const [usuarios] = await pool.query(sql);
+    res.json(usuarios);
+  } catch (e) { 
+    handleErr(res, e); 
+  }
+});
+
+// 2. Aprobar o Rechazar la identidad de un usuario
+app.put('/api/usuarios/verificar/:id', async (req, res) => {
+  try {
+    const { estado } = req.body; // Recibe 'verificado' o 'rechazado' desde Flutter
+    const usuarioId = req.params.id;
+
+    // Medida de seguridad: Validar que no envíen palabras raras
+    if (!['verificado', 'rechazado', 'pendiente'].includes(estado)) {
+      return res.status(400).json({ error: 'Estado de verificación no válido' });
+    }
+
+    const sql = 'UPDATE usuarios SET estado_verificacion = ? WHERE usuario_id = ?';
+    await pool.query(sql, [estado, usuarioId]);
+    
+    // Dejamos un rastro en el historial de auditoría
+    await registrarMovimiento(
+      null, // Puedes pasar el ID del staff desde Flutter si lo deseas en el futuro
+      'staff_auditoria', 
+      'VERIFICACIÓN_DNI', 
+      'usuarios', 
+      usuarioId, 
+      `Identidad del usuario ID ${usuarioId} marcada como: ${estado}`
+    );
+
+    res.json({ message: `Identidad actualizada a: ${estado}` });
+  } catch (e) { 
+    handleErr(res, e); 
+  }
+});
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API Online en el puerto ${PORT}`));
