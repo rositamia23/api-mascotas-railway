@@ -459,12 +459,37 @@ app.get('/api/mapa-global', async (req, res) => {
 
 app.get('/api/notificaciones', async (req, res) => {
   try {
-    const sql = `SELECT 'solicitud' as tipo, 'Trámite Adopción' as titulo, CONCAT(s.usuario_solicitante, ' solicitó la adopción de ', s.nombre_mascota) as subtitulo, s.fecha as orden FROM solicitudes_adopcion s INNER JOIN mascotas_adopcion m ON s.mascota_id = m.mascota_id WHERE COALESCE(m.estado, 'activo')='activo' UNION ALL SELECT 'adopcion' as tipo, 'Nueva Adopción' as titulo, CONCAT('Se publicó a ', nombre, ' en adopción') as subtitulo, fecha_publicacion as orden FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' UNION ALL SELECT 'perdido' as tipo, 'Alerta Roja' as titulo, CONCAT('Mascota extraviada: ', nombre) as subtitulo, fecha_publicacion as orden FROM mascotas_perdidas WHERE COALESCE(estado, 'activo')='activo' ORDER BY orden DESC LIMIT 5`;
+    // 🟢 Recibimos el correo del usuario desde la app
+    const emailUsuario = req.query.email || '';
+    
+    // Alertas Globales (Adopciones, Perdidos, etc.)
+    let sql = `
+      SELECT 'solicitud' as tipo, 'Trámite Adopción' as titulo, CONCAT(s.usuario_solicitante, ' solicitó la adopción de ', s.nombre_mascota) as subtitulo, s.fecha_solicitud as orden FROM solicitudes_adopcion s INNER JOIN mascotas_adopcion m ON s.mascota_id = m.mascota_id WHERE COALESCE(m.estado, 'activo')='activo' 
+      UNION ALL 
+      SELECT 'adopcion' as tipo, 'Nueva Adopción' as titulo, CONCAT('Se publicó a ', nombre, ' en adopción') as subtitulo, fecha_publicacion as orden FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' 
+      UNION ALL 
+      SELECT 'perdido' as tipo, 'Alerta Roja' as titulo, CONCAT('Mascota extraviada: ', nombre) as subtitulo, fecha_publicacion as orden FROM mascotas_perdidas WHERE COALESCE(estado, 'activo')='activo'
+    `;
+
+    // 🔴 Alertas Personales: Si el usuario está logueado, buscamos SUS apoyos rechazados
+    if (emailUsuario) {
+      sql += `
+        UNION ALL
+        SELECT 'rechazado' as tipo, '🔴 Apoyo Rechazado' as titulo, CONCAT('Tu campaña de apoyo fue rechazada. Motivo: ', IFNULL(motivo_rechazo, 'No cumple requisitos')) as subtitulo, fecha_publicacion as orden 
+        FROM apoyo_beneficio 
+        WHERE estado_revision = 'rechazado' AND correo_solicitante = ${pool.escape(emailUsuario)}
+      `;
+    }
+
+    // Ordenamos por los más recientes
+    sql += ` ORDER BY orden DESC LIMIT 8`;
+    
     const [notificaciones] = await pool.query(sql);
     res.json(notificaciones);
-  } catch (e) { handleErr(res, e); }
+  } catch (e) { 
+    handleErr(res, e); 
+  }
 });
-
 app.get('/api/limpiar-notificaciones', async (req, res) => {
   try {
     await pool.query('TRUNCATE TABLE movimientos_usuarios');
