@@ -460,12 +460,13 @@ app.get('/api/notificaciones', async (req, res) => {
       SELECT 'apoyo' as tipo, 'Campaña de Apoyo' as titulo, CONCAT('Nueva campaña: ', titulo) as subtitulo, fecha_publicacion as orden FROM apoyo_beneficio WHERE COALESCE(estado, 'activo')='activo' AND estado_revision='aprobado'
     `;
 
+    // 🔴 LA CORRECCIÓN ESTÁ AQUÍ (Usa CURRENT_TIMESTAMP y empareja correos sin importar mayúsculas)
     if (emailUsuario) {
       sql += `
         UNION ALL
-        SELECT 'rechazado' as tipo, '🔴 Apoyo Rechazado' as titulo, CONCAT('Tu campaña de apoyo fue rechazada. Motivo: ', IFNULL(motivo_rechazo, 'No cumple requisitos')) as subtitulo, fecha_publicacion as orden 
+        SELECT 'rechazado' as tipo, '🔴 Apoyo Rechazado' as titulo, CONCAT('Tu campaña fue rechazada. Motivo: ', IFNULL(motivo_rechazo, 'No cumple requisitos')) as subtitulo, CURRENT_TIMESTAMP as orden 
         FROM apoyo_beneficio 
-        WHERE estado_revision = 'rechazado' AND correo_solicitante = ${pool.escape(emailUsuario)}
+        WHERE estado_revision = 'rechazado' AND (LOWER(correo_solicitante) = LOWER(${pool.escape(emailUsuario)}) OR LOWER(usuario_email) = LOWER(${pool.escape(emailUsuario)}))
       `;
     }
 
