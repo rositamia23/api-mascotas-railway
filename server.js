@@ -1,14 +1,10 @@
 const express = require('express');
 const mysql = require('mysql2/promise');
-const cloudinary = require('cloudinary').v2; // ☁️ Soporte de Cloudinary integrado
+const cloudinary = require('cloudinary').v2;
 const cors = require('cors');
 require('dotenv').config();
 
-const app = reportExpressStatus();
-function reportExpressStatus() {
-  const expressApp = express();
-  return expressApp;
-}
+const app = express();
 
 app.use(cors());
 app.use(express.json({ limit: '50mb' }));
@@ -29,9 +25,8 @@ cloudinary.config({
   api_secret: process.env.CLOUDINARY_API_SECRET
 });
 
-// 🟢 AQUÍ ESTÁ LA CORRECCIÓN: Conexión directa y limpia a tu base de datos
+// 🟢 Conexión directa y limpia a tu base de datos
 const poolConfig = 'mysql://root:EpuMxJLSsSXUZpFxabPihWbbNXwXFOwb@tokaido.proxy.rlwy.net:53838/railway';
-
 const pool = mysql.createPool(poolConfig);
 
 function handleErr(res, e) {
@@ -39,18 +34,16 @@ function handleErr(res, e) {
   res.status(500).json({ error: e.message });
 }
 
-// ☁️ FUNCIÓN MAESTRA MULTIMEDIA: Sube Base64 a Cloudinary y devuelve la URL estable
+// ☁️ FUNCIÓN MAESTRA MULTIMEDIA
 async function procesarYSubirImagen(inputImagen, carpetaDestino = 'mascotas_unidas') {
   if (!inputImagen || typeof inputImagen !== 'string' || inputImagen.trim() === '') return '';
   
-  // Si ya es una URL de internet (Cloudinary), la dejamos pasar sin re-subir
   if (inputImagen.startsWith('http://') || inputImagen.startsWith('https://')) {
     return inputImagen;
   }
   
   try {
     let stringBase64 = inputImagen;
-    // Si la cadena no trae el prefijo data:image, se lo inyectamos de forma segura
     if (!stringBase64.startsWith('data:')) {
       stringBase64 = `data:image/jpeg;base64,${inputImagen}`;
     }
@@ -58,10 +51,10 @@ async function procesarYSubirImagen(inputImagen, carpetaDestino = 'mascotas_unid
     const uploadResponse = await cloudinary.uploader.upload(stringBase64, {
       folder: carpetaDestino
     });
-    return uploadResponse.secure_url; // Retorna la URL "https://res.cloudinary.com/..."
+    return uploadResponse.secure_url;
   } catch (e) {
     console.error(`❌ Error al subir imagen a Cloudinary en [${carpetaDestino}]:`, e.message);
-    return inputImagen; // Respaldo: si falla, guarda el original para evitar romper el flujo del usuario
+    return inputImagen;
   }
 }
 
@@ -80,8 +73,6 @@ async function registrarMovimiento(usuario_id, usuario_email, accion, entidad, e
 app.post('/api/register', async (req, res) => {
   try {
     const { nombre, username, celular, email, dni, foto_dni, password } = req.body;
-    
-    // Subir foto DNI a Cloudinary de forma asíncrona
     const urlFotoDni = await procesarYSubirImagen(foto_dni, 'usuarios_dni');
     
     const sql = `INSERT INTO usuarios 
@@ -95,7 +86,6 @@ app.post('/api/register', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
-// 🔴 LOGIN CORREGIDO CON VALIDACIÓN DE RECHAZO
 app.post('/api/login', async (req, res) => {
   try {
     const { email, password, clave } = req.body;
@@ -113,7 +103,6 @@ app.post('/api/login', async (req, res) => {
       return res.status(401).json({ error: 'Invalido' });
     }
 
-    // Bloqueo para cuentas rechazadas con tu mensaje personalizado
     if (u.estado_verificacion === 'rechazado') {
       return res.status(403).json({ 
         error: 'RECHAZADO', 
@@ -407,7 +396,6 @@ app.get('/api/dashboard', async (req, res) => {
 
 app.get('/api/mapa-global', async (req, res) => {
   try {
-    // 1. Adopciones
     const [adopciones] = await pool.query(`
       SELECT 
         mascota_id as id, 'adopcion' as tipo, nombre, etapa, raza, ubicacion, latitud, longitud, notas, 
@@ -416,7 +404,6 @@ app.get('/api/mapa-global', async (req, res) => {
       FROM mascotas_adopcion WHERE COALESCE(estado, 'activo') = 'activo'
     `);
     
-    // 2. Perdidos 
     const [perdidos] = await pool.query(`
       SELECT 
         alerta_id as id, 'perdido' as tipo, nombre, raza, celular as celular_contacto, dueno, 
@@ -459,10 +446,8 @@ app.get('/api/mapa-global', async (req, res) => {
 
 app.get('/api/notificaciones', async (req, res) => {
   try {
-    // 🟢 Recibimos el correo del usuario desde la app
     const emailUsuario = req.query.email || '';
     
-    // Alertas Globales (Adopciones, Perdidos, etc.)
     let sql = `
       SELECT 'solicitud' as tipo, 'Trámite Adopción' as titulo, CONCAT(s.usuario_solicitante, ' solicitó la adopción de ', s.nombre_mascota) as subtitulo, s.fecha_solicitud as orden FROM solicitudes_adopcion s INNER JOIN mascotas_adopcion m ON s.mascota_id = m.mascota_id WHERE COALESCE(m.estado, 'activo')='activo' 
       UNION ALL 
@@ -471,7 +456,6 @@ app.get('/api/notificaciones', async (req, res) => {
       SELECT 'perdido' as tipo, 'Alerta Roja' as titulo, CONCAT('Mascota extraviada: ', nombre) as subtitulo, fecha_publicacion as orden FROM mascotas_perdidas WHERE COALESCE(estado, 'activo')='activo'
     `;
 
-    // 🔴 Alertas Personales: Si el usuario está logueado, buscamos SUS apoyos rechazados
     if (emailUsuario) {
       sql += `
         UNION ALL
@@ -481,7 +465,6 @@ app.get('/api/notificaciones', async (req, res) => {
       `;
     }
 
-    // Ordenamos por los más recientes
     sql += ` ORDER BY orden DESC LIMIT 8`;
     
     const [notificaciones] = await pool.query(sql);
@@ -490,6 +473,7 @@ app.get('/api/notificaciones', async (req, res) => {
     handleErr(res, e); 
   }
 });
+
 app.get('/api/limpiar-notificaciones', async (req, res) => {
   try {
     await pool.query('TRUNCATE TABLE movimientos_usuarios');
@@ -497,6 +481,7 @@ app.get('/api/limpiar-notificaciones', async (req, res) => {
     res.send('<h1 style="color: green; text-align: center; margin-top: 50px;">¡Limpieza exitosa! 🧹</h1>');
   } catch (error) { res.status(500).send('Error'); }
 });
+
 app.get('/api/usuarios/verificacion', async (req, res) => {
   try {
     const sql = `
@@ -512,13 +497,26 @@ app.get('/api/usuarios/verificacion', async (req, res) => {
   }
 });
 
-// 2. Aprobar o Rechazar la identidad de un usuario
+// 🔴 NUEVA RUTA PARA QUE LA APP PREGUNTE EL ESTADO
+app.get('/api/usuarios/estado/:id', async (req, res) => {
+  try {
+    const [rows] = await pool.query('SELECT estado_verificacion FROM usuarios WHERE usuario_id = ?', [req.params.id]);
+    if (rows.length > 0) {
+      res.json({ estado: rows[0].estado_verificacion });
+    } else {
+      res.json({ estado: 'rechazado' });
+    }
+  } catch (e) { 
+    handleErr(res, e); 
+  }
+});
+
+// 🔴 ACTUALIZADO: Aprobar o Rechazar y LIMPIAR BASE DE DATOS
 app.put('/api/usuarios/verificar/:id', async (req, res) => {
   try {
-    const { estado } = req.body; // Recibe 'verificado' o 'rechazado' desde Flutter
+    const { estado } = req.body; 
     const usuarioId = req.params.id;
 
-    // Medida de seguridad: Validar que no envíen palabras raras
     if (!['verificado', 'rechazado', 'pendiente'].includes(estado)) {
       return res.status(400).json({ error: 'Estado de verificación no válido' });
     }
@@ -526,15 +524,17 @@ app.put('/api/usuarios/verificar/:id', async (req, res) => {
     const sql = 'UPDATE usuarios SET estado_verificacion = ? WHERE usuario_id = ?';
     await pool.query(sql, [estado, usuarioId]);
     
-    // Dejamos un rastro en el historial de auditoría
-    await registrarMovimiento(
-      null, // Puedes pasar el ID del staff desde Flutter si lo deseas en el futuro
-      'staff_auditoria', 
-      'VERIFICACIÓN_DNI', 
-      'usuarios', 
-      usuarioId, 
-      `Identidad del usuario ID ${usuarioId} marcada como: ${estado}`
-    );
+    // 🧹 LIMPIEZA AUTOMÁTICA
+    if (estado === 'rechazado') {
+      console.log(`🧹 Limpiando publicaciones del usuario rechazado ID: ${usuarioId}`);
+      await pool.query('UPDATE mascotas_adopcion SET estado="inactivo" WHERE usuario_id=?', [usuarioId]);
+      await pool.query('UPDATE mascotas_perdidas SET estado="inactivo" WHERE usuario_id=?', [usuarioId]);
+      await pool.query('UPDATE apoyo_beneficio SET estado="inactivo" WHERE usuario_id=?', [usuarioId]);
+      await pool.query('DELETE FROM registro_rescates WHERE usuario_id=?', [usuarioId]);
+      await pool.query('DELETE FROM solicitudes_adopcion WHERE usuario_id=?', [usuarioId]);
+    }
+
+    await registrarMovimiento(null, 'staff_auditoria', 'VERIFICACIÓN_DNI', 'usuarios', usuarioId, `Identidad de ID ${usuarioId} marcada como: ${estado}`);
 
     res.json({ message: `Identidad actualizada a: ${estado}` });
   } catch (e) { 
