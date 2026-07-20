@@ -367,10 +367,17 @@ app.post('/api/apoyos', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
+// 🔴 AQUÍ ESTÁ LA CORRECCIÓN CLAVE 1: Recibir e inyectar motivo_rechazo y actualizaciones
 app.put('/api/apoyos/revision/:id', async (req, res) => {
   try {
-    await pool.query('UPDATE apoyo_beneficio SET estado_revision=? WHERE donacion_id=?', [req.body.estado_revision, req.params.id]);
-    await registrarMovimiento(1, 'admin@mascotas.com', 'REVISIÓN', 'apoyo_beneficio', req.params.id, `Cambió estado de revisión a: ${req.body.estado_revision}`);
+    const { estado_revision, motivo_rechazo, actualizaciones } = req.body;
+    
+    await pool.query(
+      'UPDATE apoyo_beneficio SET estado_revision=?, motivo_rechazo=?, actualizaciones=? WHERE donacion_id=?', 
+      [estado_revision, motivo_rechazo || null, actualizaciones || null, req.params.id]
+    );
+    
+    await registrarMovimiento(1, 'admin@mascotas.com', 'REVISIÓN', 'apoyo_beneficio', req.params.id, `Cambió estado de revisión a: ${estado_revision}`);
     res.json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
@@ -460,11 +467,11 @@ app.get('/api/notificaciones', async (req, res) => {
       SELECT 'apoyo' as tipo, 'Campaña de Apoyo' as titulo, CONCAT('Nueva campaña: ', titulo) as subtitulo, fecha_publicacion as orden FROM apoyo_beneficio WHERE COALESCE(estado, 'activo')='activo' AND estado_revision='aprobado'
     `;
 
-    // 🔴 LA CORRECCIÓN ESTÁ AQUÍ (Usa CURRENT_TIMESTAMP y empareja correos sin importar mayúsculas)
+    // 🔴 AQUÍ ESTÁ LA CORRECCIÓN CLAVE 2: Extraer el motivo y usar COALESCE(fecha_publicacion, CURRENT_TIMESTAMP)
     if (emailUsuario) {
       sql += `
         UNION ALL
-        SELECT 'rechazado' as tipo, '🔴 Apoyo Rechazado' as titulo, CONCAT('Tu campaña fue rechazada. Motivo: ', IFNULL(motivo_rechazo, 'No cumple requisitos')) as subtitulo, CURRENT_TIMESTAMP as orden 
+        SELECT 'rechazado' as tipo, '🔴 Apoyo Rechazado' as titulo, CONCAT('Tu campaña fue rechazada. Motivo: ', IFNULL(motivo_rechazo, 'No cumple requisitos')) as subtitulo, COALESCE(fecha_publicacion, CURRENT_TIMESTAMP) as orden 
         FROM apoyo_beneficio 
         WHERE estado_revision = 'rechazado' AND (LOWER(correo_solicitante) = LOWER(${pool.escape(emailUsuario)}) OR LOWER(usuario_email) = LOWER(${pool.escape(emailUsuario)}))
       `;
@@ -502,7 +509,6 @@ app.get('/api/usuarios/verificacion', async (req, res) => {
   }
 });
 
-// 🔴 NUEVA RUTA PARA QUE LA APP PREGUNTE EL ESTADO
 app.get('/api/usuarios/estado/:id', async (req, res) => {
   try {
     const [rows] = await pool.query('SELECT estado_verificacion FROM usuarios WHERE usuario_id = ?', [req.params.id]);
@@ -516,7 +522,6 @@ app.get('/api/usuarios/estado/:id', async (req, res) => {
   }
 });
 
-// 🔴 ACTUALIZADO: Aprobar o Rechazar y LIMPIAR BASE DE DATOS
 app.put('/api/usuarios/verificar/:id', async (req, res) => {
   try {
     const { estado } = req.body; 
