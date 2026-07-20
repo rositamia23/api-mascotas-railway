@@ -454,6 +454,10 @@ app.get('/api/notificaciones', async (req, res) => {
       SELECT 'adopcion' as tipo, 'Nueva Adopción' as titulo, CONCAT('Se publicó a ', nombre, ' en adopción') as subtitulo, fecha_publicacion as orden FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' 
       UNION ALL 
       SELECT 'perdido' as tipo, 'Alerta Roja' as titulo, CONCAT('Mascota extraviada: ', nombre) as subtitulo, fecha_publicacion as orden FROM mascotas_perdidas WHERE COALESCE(estado, 'activo')='activo'
+      UNION ALL 
+      SELECT 'rescate' as tipo, 'Emergencia Médica' as titulo, CONCAT('Caso clínico reportado: ', nombre) as subtitulo, fecha_publicacion as orden FROM registro_rescates
+      UNION ALL 
+      SELECT 'apoyo' as tipo, 'Campaña de Apoyo' as titulo, CONCAT('Nueva campaña: ', titulo) as subtitulo, fecha_publicacion as orden FROM apoyo_beneficio WHERE COALESCE(estado, 'activo')='activo' AND estado_revision='aprobado'
     `;
 
     if (emailUsuario) {
@@ -465,7 +469,7 @@ app.get('/api/notificaciones', async (req, res) => {
       `;
     }
 
-    sql += ` ORDER BY orden DESC LIMIT 8`;
+    sql += ` ORDER BY orden DESC LIMIT 15`;
     
     const [notificaciones] = await pool.query(sql);
     res.json(notificaciones);
