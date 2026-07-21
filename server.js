@@ -117,9 +117,20 @@ app.post('/api/login', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
+// 🟢 CORREGIDO: Endpoint Adopciones ahora recibe y aplica el filtro de fecha_publicacion
 app.get('/api/adopciones', async (req, res) => {
   try {
-    const [r] = await pool.query("SELECT * FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' ORDER BY mascota_id DESC");
+    const { fecha_publicacion } = req.query;
+    let query = "SELECT * FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo'";
+    let params = [];
+
+    if (fecha_publicacion) {
+      query += " AND fecha_publicacion = ?";
+      params.push(fecha_publicacion);
+    }
+
+    query += " ORDER BY mascota_id DESC";
+    const [r] = await pool.query(query, params);
     res.json(r);
   } catch (e) { handleErr(res, e); }
 });
@@ -367,7 +378,7 @@ app.post('/api/apoyos', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
-// 🔴 AQUÍ ESTÁ LA CORRECCIÓN CLAVE 1: Recibir e inyectar motivo_rechazo y actualizaciones
+// 🟢 CORREGIDO: Endpoint Apoyos/Revision ahora procesa y guarda motivo_rechazo y actualizaciones
 app.put('/api/apoyos/revision/:id', async (req, res) => {
   try {
     const { estado_revision, motivo_rechazo, actualizaciones } = req.body;
@@ -451,6 +462,7 @@ app.get('/api/mapa-global', async (req, res) => {
   }
 });
 
+// 🟢 CORREGIDO: Las notificaciones ahora sacan el rechazo al tope de la lista visual con CURRENT_TIMESTAMP
 app.get('/api/notificaciones', async (req, res) => {
   try {
     const emailUsuario = req.query.email || '';
@@ -467,11 +479,10 @@ app.get('/api/notificaciones', async (req, res) => {
       SELECT 'apoyo' as tipo, 'Campaña de Apoyo' as titulo, CONCAT('Nueva campaña: ', titulo) as subtitulo, fecha_publicacion as orden FROM apoyo_beneficio WHERE COALESCE(estado, 'activo')='activo' AND estado_revision='aprobado'
     `;
 
-    // 🔴 AQUÍ ESTÁ LA CORRECCIÓN CLAVE 2: Extraer el motivo y usar COALESCE(fecha_publicacion, CURRENT_TIMESTAMP)
     if (emailUsuario) {
       sql += `
         UNION ALL
-        SELECT 'rechazado' as tipo, '🔴 Apoyo Rechazado' as titulo, CONCAT('Tu campaña fue rechazada. Motivo: ', IFNULL(motivo_rechazo, 'No cumple requisitos')) as subtitulo, COALESCE(fecha_publicacion, CURRENT_TIMESTAMP) as orden 
+        SELECT 'rechazado' as tipo, '🔴 Apoyo Rechazado' as titulo, CONCAT('Tu campaña fue rechazada. Motivo: ', IFNULL(motivo_rechazo, 'No cumple requisitos')) as subtitulo, CURRENT_TIMESTAMP as orden 
         FROM apoyo_beneficio 
         WHERE estado_revision = 'rechazado' AND (LOWER(correo_solicitante) = LOWER(${pool.escape(emailUsuario)}) OR LOWER(usuario_email) = LOWER(${pool.escape(emailUsuario)}))
       `;
@@ -534,7 +545,6 @@ app.put('/api/usuarios/verificar/:id', async (req, res) => {
     const sql = 'UPDATE usuarios SET estado_verificacion = ? WHERE usuario_id = ?';
     await pool.query(sql, [estado, usuarioId]);
     
-    // 🧹 LIMPIEZA AUTOMÁTICA
     if (estado === 'rechazado') {
       console.log(`🧹 Limpiando publicaciones del usuario rechazado ID: ${usuarioId}`);
       await pool.query('UPDATE mascotas_adopcion SET estado="inactivo" WHERE usuario_id=?', [usuarioId]);
