@@ -172,7 +172,6 @@ app.put('/api/adopciones/:id', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
-// Al borrar adopción, se borran sus notificaciones (solicitudes_adopcion) automáticamente
 app.delete('/api/adopciones/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -489,45 +488,53 @@ app.get('/api/mapa-global', async (req, res) => {
 });
 
 // ==========================================
-// 🔴 NOTIFICACIONES - EXACTAMENTE COMO SOLICITASTE
+// 🔴 NOTIFICACIONES - AHORA CON LOS DATOS DE SOLICITUD
 // ==========================================
 
 app.get('/api/notificaciones', async (req, res) => {
   try {
     const emailUsuario = req.query.email || '';
     
-    // 1. Notificaciones Públicas (Lo ven todos en el dashboard)
+    // 1. Notificaciones Públicas (Con campo nulo en datos_solicitud)
     let sql = `
-      SELECT 'adopcion' as tipo, 'Nueva Adopción' as titulo, CONCAT('Se publicó a ', nombre, ' en adopción') as subtitulo, fecha_publicacion as orden FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' 
+      SELECT 'adopcion' as tipo, 'Nueva Adopción' as titulo, CONCAT('Se publicó a ', nombre, ' en adopción') as subtitulo, fecha_publicacion as orden, NULL as datos_solicitud FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' 
       UNION ALL 
-      SELECT 'perdido' as tipo, 'Alerta Roja' as titulo, CONCAT('Mascota extraviada: ', nombre) as subtitulo, fecha_publicacion as orden FROM mascotas_perdidas WHERE COALESCE(estado, 'activo')='activo'
+      SELECT 'perdido' as tipo, 'Alerta Roja' as titulo, CONCAT('Mascota extraviada: ', nombre) as subtitulo, fecha_publicacion as orden, NULL as datos_solicitud FROM mascotas_perdidas WHERE COALESCE(estado, 'activo')='activo'
       UNION ALL 
-      SELECT 'rescate' as tipo, 'Emergencia Médica' as titulo, CONCAT('Caso clínico reportado: ', nombre) as subtitulo, fecha_publicacion as orden FROM registro_rescates
+      SELECT 'rescate' as tipo, 'Emergencia Médica' as titulo, CONCAT('Caso clínico reportado: ', nombre) as subtitulo, fecha_publicacion as orden, NULL as datos_solicitud FROM registro_rescates
       UNION ALL 
-      SELECT 'apoyo' as tipo, 'Campaña de Apoyo' as titulo, CONCAT('Nueva campaña: ', titulo) as subtitulo, fecha_publicacion as orden FROM apoyo_beneficio WHERE COALESCE(estado, 'activo')='activo' AND estado_revision='aprobado'
+      SELECT 'apoyo' as tipo, 'Campaña de Apoyo' as titulo, CONCAT('Nueva campaña: ', titulo) as subtitulo, fecha_publicacion as orden, NULL as datos_solicitud FROM apoyo_beneficio WHERE COALESCE(estado, 'activo')='activo' AND estado_revision='aprobado'
     `;
 
-    // 2. Notificaciones Privadas (Solo llegan a los usuarios correctos)
+    // 2. Notificaciones Privadas
     if (emailUsuario) {
       const safeEmail = pool.escape(emailUsuario);
       
       sql += `
         UNION ALL
-        -- 📬 ALERTA PARA EL DUEÑO
-        SELECT 'solicitud' as tipo, '¡Solicitud de Adopción!' as titulo, CONCAT(s.usuario_solicitante, ' quiere adoptar a tu mascota') as subtitulo, s.fecha_solicitud as orden 
+        -- 📬 ALERTA PARA EL DUEÑO (CON LOS DATOS DEL FORMULARIO EMPAQUETADOS)
+        SELECT 'solicitud' as tipo, '¡Solicitud de Adopción!' as titulo, CONCAT(s.usuario_solicitante, ' quiere adoptar a tu mascota') as subtitulo, s.fecha_solicitud as orden,
+        JSON_OBJECT(
+          'nombre', s.nombre_solicitante,
+          'celular', s.telefono_solicitante,
+          'correo', s.correo_solicitante,
+          'dni', s.dni_solicitante,
+          'vivienda', s.vivienda,
+          'experiencia', s.experiencia
+        ) as datos_solicitud
         FROM solicitudes_adopcion s 
         INNER JOIN mascotas_adopcion m ON s.mascota_id = m.mascota_id 
         WHERE LOWER(m.usuario_email) = LOWER(${safeEmail}) AND COALESCE(m.estado, 'activo')='activo'
         
         UNION ALL
         -- 📤 ALERTA PARA EL SOLICITANTE
-        SELECT 'solicitud' as tipo, 'Trámite Iniciado' as titulo, 'Tu solicitud ha sido enviada al dueño' as subtitulo, fecha_solicitud as orden 
+        SELECT 'solicitud' as tipo, 'Trámite Iniciado' as titulo, 'Tu solicitud ha sido enviada al dueño' as subtitulo, fecha_solicitud as orden, NULL as datos_solicitud
         FROM solicitudes_adopcion 
         WHERE LOWER(correo_solicitante) = LOWER(${safeEmail})
 
         UNION ALL
         -- 🔴 ALERTA DE RECHAZO
-        SELECT 'rechazado' as tipo, '🔴 Apoyo Rechazado' as titulo, CONCAT('Tu campaña fue rechazada. Motivo: ', IFNULL(motivo_rechazo, 'No cumple requisitos')) as subtitulo, CURRENT_TIMESTAMP as orden 
+        SELECT 'rechazado' as tipo, '🔴 Apoyo Rechazado' as titulo, CONCAT('Tu campaña fue rechazada. Motivo: ', IFNULL(motivo_rechazo, 'No cumple requisitos')) as subtitulo, CURRENT_TIMESTAMP as orden, NULL as datos_solicitud
         FROM apoyo_beneficio 
         WHERE estado_revision = 'rechazado' AND (LOWER(correo_solicitante) = LOWER(${safeEmail}) OR LOWER(usuario_email) = LOWER(${safeEmail}))
       `;
@@ -536,7 +543,16 @@ app.get('/api/notificaciones', async (req, res) => {
     sql += ` ORDER BY orden DESC LIMIT 20`;
     
     const [notificaciones] = await pool.query(sql);
-    res.json(notificaciones);
+
+    // Desempaquetamos el JSON antes de mandarlo a Flutter
+    const formateadas = notificaciones.map(n => {
+      if (n.datos_solicitud && typeof n.datos_solicitud === 'string') {
+        try { n.datos_solicitud = JSON.parse(n.datos_solicitud); } catch(e){}
+      }
+      return n;
+    });
+
+    res.json(formateadas);
   } catch (e) { 
     handleErr(res, e); 
   }
