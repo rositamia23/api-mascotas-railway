@@ -488,14 +488,14 @@ app.get('/api/mapa-global', async (req, res) => {
 });
 
 // ==========================================
-// 🔴 NOTIFICACIONES - AHORA CON LOS DATOS DE SOLICITUD
+// 🔴 NOTIFICACIONES
 // ==========================================
 
 app.get('/api/notificaciones', async (req, res) => {
   try {
     const emailUsuario = req.query.email || '';
     
-    // 1. Notificaciones Públicas (Con campo nulo en datos_solicitud)
+    // 1. Notificaciones Públicas
     let sql = `
       SELECT 'adopcion' as tipo, 'Nueva Adopción' as titulo, CONCAT('Se publicó a ', nombre, ' en adopción') as subtitulo, fecha_publicacion as orden, NULL as datos_solicitud FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' 
       UNION ALL 
@@ -507,12 +507,13 @@ app.get('/api/notificaciones', async (req, res) => {
     `;
 
     // 2. Notificaciones Privadas
-    if (emailUsuario) {
-      const safeEmail = pool.escape(emailUsuario);
+    // Validamos estrictamente que el usuario tenga un correo válido para que no le llegue a todos.
+    if (emailUsuario && emailUsuario.trim().length > 3) {
+      const safeEmail = pool.escape(emailUsuario.trim());
       
       sql += `
         UNION ALL
-        -- 📬 ALERTA PARA EL DUEÑO (CON LOS DATOS DEL FORMULARIO EMPAQUETADOS)
+        -- 📬 ALERTA PARA EL DUEÑO (SOLO EL DUEÑO LO VE)
         SELECT 'solicitud' as tipo, '¡Solicitud de Adopción!' as titulo, CONCAT(s.usuario_solicitante, ' quiere adoptar a tu mascota') as subtitulo, s.fecha_solicitud as orden,
         JSON_OBJECT(
           'nombre', s.nombre_solicitante,
@@ -524,19 +525,24 @@ app.get('/api/notificaciones', async (req, res) => {
         ) as datos_solicitud
         FROM solicitudes_adopcion s 
         INNER JOIN mascotas_adopcion m ON s.mascota_id = m.mascota_id 
-        WHERE LOWER(m.usuario_email) = LOWER(${safeEmail}) AND COALESCE(m.estado, 'activo')='activo'
+        WHERE LOWER(m.usuario_email) = LOWER(${safeEmail}) 
+        AND m.usuario_email IS NOT NULL AND m.usuario_email != ''
+        AND COALESCE(m.estado, 'activo')='activo'
         
         UNION ALL
         -- 📤 ALERTA PARA EL SOLICITANTE
-        SELECT 'solicitud' as tipo, 'Trámite Iniciado' as titulo, 'Tu solicitud ha sido enviada al dueño' as subtitulo, fecha_solicitud as orden, NULL as datos_solicitud
-        FROM solicitudes_adopcion 
-        WHERE LOWER(correo_solicitante) = LOWER(${safeEmail})
+        SELECT 'solicitud' as tipo, 'Trámite Iniciado' as titulo, 'Tu solicitud ha sido enviada al dueño' as subtitulo, s.fecha_solicitud as orden, NULL as datos_solicitud
+        FROM solicitudes_adopcion s
+        WHERE LOWER(s.correo_solicitante) = LOWER(${safeEmail})
+        AND s.correo_solicitante IS NOT NULL AND s.correo_solicitante != ''
 
         UNION ALL
-        -- 🔴 ALERTA DE RECHAZO
-        SELECT 'rechazado' as tipo, '🔴 Apoyo Rechazado' as titulo, CONCAT('Tu campaña fue rechazada. Motivo: ', IFNULL(motivo_rechazo, 'No cumple requisitos')) as subtitulo, CURRENT_TIMESTAMP as orden, NULL as datos_solicitud
+        -- 🔴 ALERTA DE RECHAZO (CORREGIDO EL ORDEN PARA QUE NO SALGA SIEMPRE ARRIBA)
+        SELECT 'rechazado' as tipo, '🔴 Apoyo Rechazado' as titulo, CONCAT('Tu campaña fue rechazada. Motivo: ', IFNULL(motivo_rechazo, 'No cumple requisitos')) as subtitulo, fecha_publicacion as orden, NULL as datos_solicitud
         FROM apoyo_beneficio 
-        WHERE estado_revision = 'rechazado' AND (LOWER(correo_solicitante) = LOWER(${safeEmail}) OR LOWER(usuario_email) = LOWER(${safeEmail}))
+        WHERE estado_revision = 'rechazado' 
+        AND (LOWER(correo_solicitante) = LOWER(${safeEmail}) OR LOWER(usuario_email) = LOWER(${safeEmail}))
+        AND COALESCE(estado, 'activo') = 'activo'
       `;
     }
 
