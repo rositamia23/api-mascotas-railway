@@ -64,11 +64,14 @@ async function registrarMovimiento(usuario_id, usuario_email, accion, entidad, e
       (usuario_id, usuario_email, accion, entidad, entidad_id, detalle, fecha_movimiento) 
       VALUES (?, ?, ?, ?, ?, ?, CURRENT_TIMESTAMP)`;
     await pool.query(sql, [usuario_id || null, usuario_email || null, accion, entidad, entidad_id || null, detalle || '']);
-    console.log(`📝 Movimiento Auditado -> Acción: ${accion} | Entidad: ${entidad}`);
   } catch (e) {
     console.error("❌ Error interno al registrar movimiento en la tabla de auditoría:", e.message);
   }
 }
+
+// ==========================================
+// ENDPOINTS DE USUARIOS / AUTH
+// ==========================================
 
 app.post('/api/register', async (req, res) => {
   try {
@@ -117,7 +120,10 @@ app.post('/api/login', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
-// 🟢 CORREGIDO: Endpoint Adopciones ahora recibe y aplica el filtro de fecha_publicacion
+// ==========================================
+// ENDPOINTS DE ADOPCIONES
+// ==========================================
+
 app.get('/api/adopciones', async (req, res) => {
   try {
     const { fecha_publicacion } = req.query;
@@ -166,6 +172,7 @@ app.put('/api/adopciones/:id', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
+// Al borrar adopción, se borran sus notificaciones (solicitudes_adopcion) automáticamente
 app.delete('/api/adopciones/:id', async (req, res) => {
   const { id } = req.params;
   try {
@@ -175,6 +182,10 @@ app.delete('/api/adopciones/:id', async (req, res) => {
     res.json({ message: 'Mascota y notificaciones eliminadas correctamente' });
   } catch (error) { handleErr(res, error); }
 });
+
+// ==========================================
+// ENDPOINTS DE MASCOTAS PERDIDAS
+// ==========================================
 
 app.get('/api/perdidos', async (req, res) => {
   try {
@@ -222,6 +233,10 @@ app.delete('/api/perdidos/:id', async (req, res) => {
     res.json({ message: 'Alerta y notificaciones eliminadas correctamente' });
   } catch (error) { handleErr(res, error); }
 });
+
+// ==========================================
+// ENDPOINTS DE RESCATES
+// ==========================================
 
 app.get('/api/rescates', async (req, res) => {
   try {
@@ -276,6 +291,10 @@ app.delete('/api/rescates/:id', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
+// ==========================================
+// ENDPOINTS DE SOLICITUDES DE ADOPCIÓN
+// ==========================================
+
 app.get('/api/solicitudes', async (req, res) => {
   try {
     const [r] = await pool.query("SELECT * FROM solicitudes_adopcion ORDER BY solicitud_id DESC");
@@ -301,6 +320,10 @@ app.post('/api/solicitudes', async (req, res) => {
     res.status(201).json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
+
+// ==========================================
+// ENDPOINTS DE APOYOS BENEFICOS
+// ==========================================
 
 app.get('/api/apoyos', async (req, res) => {
   try {
@@ -378,7 +401,6 @@ app.post('/api/apoyos', async (req, res) => {
   } catch (e) { handleErr(res, e); }
 });
 
-// 🟢 CORREGIDO: Endpoint Apoyos/Revision ahora procesa y guarda motivo_rechazo y actualizaciones
 app.put('/api/apoyos/revision/:id', async (req, res) => {
   try {
     const { estado_revision, motivo_rechazo, actualizaciones } = req.body;
@@ -399,6 +421,10 @@ app.delete('/api/apoyos/:id', async (req, res) => {
     res.json({ message: 'Ok' });
   } catch (e) { handleErr(res, e); }
 });
+
+// ==========================================
+// METRICAS Y MAPA
+// ==========================================
 
 app.get('/api/dashboard', async (req, res) => {
   try {
@@ -462,14 +488,16 @@ app.get('/api/mapa-global', async (req, res) => {
   }
 });
 
-// 🟢 CORREGIDO: Las notificaciones ahora sacan el rechazo al tope de la lista visual con CURRENT_TIMESTAMP
+// ==========================================
+// 🔴 NOTIFICACIONES - EXACTAMENTE COMO SOLICITASTE
+// ==========================================
+
 app.get('/api/notificaciones', async (req, res) => {
   try {
     const emailUsuario = req.query.email || '';
     
+    // 1. Notificaciones Públicas (Lo ven todos en el dashboard)
     let sql = `
-      SELECT 'solicitud' as tipo, 'Trámite Adopción' as titulo, CONCAT(s.usuario_solicitante, ' solicitó la adopción de ', s.nombre_mascota) as subtitulo, s.fecha_solicitud as orden FROM solicitudes_adopcion s INNER JOIN mascotas_adopcion m ON s.mascota_id = m.mascota_id WHERE COALESCE(m.estado, 'activo')='activo' 
-      UNION ALL 
       SELECT 'adopcion' as tipo, 'Nueva Adopción' as titulo, CONCAT('Se publicó a ', nombre, ' en adopción') as subtitulo, fecha_publicacion as orden FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' 
       UNION ALL 
       SELECT 'perdido' as tipo, 'Alerta Roja' as titulo, CONCAT('Mascota extraviada: ', nombre) as subtitulo, fecha_publicacion as orden FROM mascotas_perdidas WHERE COALESCE(estado, 'activo')='activo'
@@ -479,16 +507,33 @@ app.get('/api/notificaciones', async (req, res) => {
       SELECT 'apoyo' as tipo, 'Campaña de Apoyo' as titulo, CONCAT('Nueva campaña: ', titulo) as subtitulo, fecha_publicacion as orden FROM apoyo_beneficio WHERE COALESCE(estado, 'activo')='activo' AND estado_revision='aprobado'
     `;
 
+    // 2. Notificaciones Privadas (Solo llegan a los usuarios correctos)
     if (emailUsuario) {
+      const safeEmail = pool.escape(emailUsuario);
+      
       sql += `
         UNION ALL
+        -- 📬 ALERTA PARA EL DUEÑO
+        SELECT 'solicitud' as tipo, '¡Solicitud de Adopción!' as titulo, CONCAT(s.usuario_solicitante, ' quiere adoptar a tu mascota') as subtitulo, s.fecha_solicitud as orden 
+        FROM solicitudes_adopcion s 
+        INNER JOIN mascotas_adopcion m ON s.mascota_id = m.mascota_id 
+        WHERE LOWER(m.usuario_email) = LOWER(${safeEmail}) AND COALESCE(m.estado, 'activo')='activo'
+        
+        UNION ALL
+        -- 📤 ALERTA PARA EL SOLICITANTE
+        SELECT 'solicitud' as tipo, 'Trámite Iniciado' as titulo, 'Tu solicitud ha sido enviada al dueño' as subtitulo, fecha_solicitud as orden 
+        FROM solicitudes_adopcion 
+        WHERE LOWER(correo_solicitante) = LOWER(${safeEmail})
+
+        UNION ALL
+        -- 🔴 ALERTA DE RECHAZO
         SELECT 'rechazado' as tipo, '🔴 Apoyo Rechazado' as titulo, CONCAT('Tu campaña fue rechazada. Motivo: ', IFNULL(motivo_rechazo, 'No cumple requisitos')) as subtitulo, CURRENT_TIMESTAMP as orden 
         FROM apoyo_beneficio 
-        WHERE estado_revision = 'rechazado' AND (LOWER(correo_solicitante) = LOWER(${pool.escape(emailUsuario)}) OR LOWER(usuario_email) = LOWER(${pool.escape(emailUsuario)}))
+        WHERE estado_revision = 'rechazado' AND (LOWER(correo_solicitante) = LOWER(${safeEmail}) OR LOWER(usuario_email) = LOWER(${safeEmail}))
       `;
     }
 
-    sql += ` ORDER BY orden DESC LIMIT 15`;
+    sql += ` ORDER BY orden DESC LIMIT 20`;
     
     const [notificaciones] = await pool.query(sql);
     res.json(notificaciones);
@@ -504,6 +549,10 @@ app.get('/api/limpiar-notificaciones', async (req, res) => {
     res.send('<h1 style="color: green; text-align: center; margin-top: 50px;">¡Limpieza exitosa! 🧹</h1>');
   } catch (error) { res.status(500).send('Error'); }
 });
+
+// ==========================================
+// ENDPOINTS DE AUDITORÍA DE USUARIOS
+// ==========================================
 
 app.get('/api/usuarios/verificacion', async (req, res) => {
   try {
