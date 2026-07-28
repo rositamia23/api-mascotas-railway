@@ -626,10 +626,6 @@ app.put('/api/usuarios/verificar/:id', async (req, res) => {
   }
 });
 
-// ==========================================
-// ENDPOINTS DE IA GENERATIVA (CUERPO COMPLETO)
-// ==========================================
-
 app.post('/api/ia-generativa', async (req, res) => {
     try {
         const { descripcion } = req.body;
@@ -638,10 +634,14 @@ app.post('/api/ia-generativa', async (req, res) => {
             return res.status(400).json({ error: 'Falta la descripción' });
         }
 
-        // Instrucción estricta para asegurar cuerpo completo y fidelidad absoluta
+        // 🟢 SEMILLA ALEATORIA: Esto obliga al servidor de la IA a crear una imagen nueva y única cada vez
+        const seed = Math.floor(Math.random() * 1000000);
+
+        // Instrucción estricta para cuerpo completo y fidelidad absoluta
         const prompt = `Photorealistic 8k highly detailed FULL BODY SHOT of a pet. The entire body from head to paws must be visible. Solid white background, studio lighting. STRICTLY OBEY THIS EXACT DESCRIPTION: ${descripcion}. No cropping, no close-up.`;
         
-        const urlFinal = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true`;
+        // Añadimos &seed=${seed} para que nunca se repita la imagen
+        const urlFinal = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&seed=${seed}&nologo=true`;
 
         const response = await fetch(urlFinal);
         
@@ -659,7 +659,6 @@ app.post('/api/ia-generativa', async (req, res) => {
         res.status(500).json({ error: 'Servidor IA saturado' });
     }
 });
-
 // ==========================================
 // INICIALIZACIÓN DEL SERVIDOR (ÚNICA DECLARACIÓN)
 // ==========================================
