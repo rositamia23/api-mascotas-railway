@@ -648,9 +648,6 @@ app.post('/api/ia-generativa', async (req, res) => {
         if (!descripcion) {
             return res.status(400).json({ error: 'Falta la descripción' });
         }
-
-        // 🟢 EL TRUCO: Cambiamos "portrait" (cara) por "FULL BODY SHOT" (cuerpo completo).
-        // Y le ponemos reglas estrictas ("STRICTLY OBEY", "No cropping") para que no se invente nada.
         const prompt = `Photorealistic 8k highly detailed FULL BODY SHOT of a pet. The entire body from head to paws must be visible. Solid white background, studio lighting. STRICTLY OBEY THIS EXACT DESCRIPTION: ${descripcion}. No cropping, no close-up.`;
         
         const urlFinal = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true`;
