@@ -637,6 +637,10 @@ app.put('/api/usuarios/verificar/:id', async (req, res) => {
 // ENDPOINTS DE IA GENERATIVA
 // ==========================================
 
+// ==========================================
+// ENDPOINTS DE IA GENERATIVA
+// ==========================================
+
 app.post('/api/ia-generativa', async (req, res) => {
     try {
         const { descripcion } = req.body;
@@ -645,8 +649,10 @@ app.post('/api/ia-generativa', async (req, res) => {
             return res.status(400).json({ error: 'Falta la descripción' });
         }
 
-        // Prompt en inglés optimizado para máxima calidad fotorrealista
-        const prompt = `Photorealistic 8k highly detailed portrait of a pet exactly matching this description: ${descripcion}, solid white background, studio lighting`;
+        // 🟢 EL TRUCO: Cambiamos "portrait" (cara) por "FULL BODY SHOT" (cuerpo completo).
+        // Y le ponemos reglas estrictas ("STRICTLY OBEY", "No cropping") para que no se invente nada.
+        const prompt = `Photorealistic 8k highly detailed FULL BODY SHOT of a pet. The entire body from head to paws must be visible. Solid white background, studio lighting. STRICTLY OBEY THIS EXACT DESCRIPTION: ${descripcion}. No cropping, no close-up.`;
+        
         const urlFinal = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true`;
 
         // 1. Railway descarga la imagen (Railway jamás es bloqueado)
@@ -670,6 +676,12 @@ app.post('/api/ia-generativa', async (req, res) => {
         res.status(500).json({ error: 'Servidor IA saturado' });
     }
 });
+
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API Online en el puerto ${PORT}`));
+
+process.on('uncaughtException', (err) => console.error(err));
+process.on('unhandledRejection', (err) => console.error(err));
 
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API Online en el puerto ${PORT}`));
