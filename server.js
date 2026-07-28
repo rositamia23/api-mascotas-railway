@@ -495,7 +495,6 @@ app.get('/api/notificaciones', async (req, res) => {
   try {
     const emailUsuario = req.query.email || '';
     
-    // 1. Notificaciones Públicas
     let sql = `
       SELECT 'adopcion' as tipo, 'Nueva Adopción' as titulo, CONCAT('Se publicó a ', nombre, ' en adopción') as subtitulo, fecha_publicacion as orden, NULL as datos_solicitud FROM mascotas_adopcion WHERE COALESCE(estado, 'activo')='activo' 
       UNION ALL 
@@ -506,14 +505,11 @@ app.get('/api/notificaciones', async (req, res) => {
       SELECT 'apoyo' as tipo, 'Campaña de Apoyo' as titulo, CONCAT('Nueva campaña: ', titulo) as subtitulo, fecha_publicacion as orden, NULL as datos_solicitud FROM apoyo_beneficio WHERE COALESCE(estado, 'activo')='activo' AND estado_revision='aprobado'
     `;
 
-    // 2. Notificaciones Privadas
-    // Validamos estrictamente que el usuario tenga un correo válido para que no le llegue a todos.
     if (emailUsuario && emailUsuario.trim().length > 3) {
       const safeEmail = pool.escape(emailUsuario.trim());
       
       sql += `
         UNION ALL
-        -- 📬 ALERTA PARA EL DUEÑO (SOLO EL DUEÑO LO VE)
         SELECT 'solicitud' as tipo, '¡Solicitud de Adopción!' as titulo, CONCAT(s.usuario_solicitante, ' quiere adoptar a tu mascota') as subtitulo, s.fecha_solicitud as orden,
         JSON_OBJECT(
           'nombre', s.nombre_solicitante,
@@ -530,14 +526,12 @@ app.get('/api/notificaciones', async (req, res) => {
         AND COALESCE(m.estado, 'activo')='activo'
         
         UNION ALL
-        -- 📤 ALERTA PARA EL SOLICITANTE
         SELECT 'solicitud' as tipo, 'Trámite Iniciado' as titulo, 'Tu solicitud ha sido enviada al dueño' as subtitulo, s.fecha_solicitud as orden, NULL as datos_solicitud
         FROM solicitudes_adopcion s
         WHERE LOWER(s.correo_solicitante) = LOWER(${safeEmail})
         AND s.correo_solicitante IS NOT NULL AND s.correo_solicitante != ''
 
         UNION ALL
-        -- 🔴 ALERTA DE RECHAZO (CORREGIDO EL ORDEN PARA QUE NO SALGA SIEMPRE ARRIBA)
         SELECT 'rechazado' as tipo, '🔴 Apoyo Rechazado' as titulo, CONCAT('Tu campaña fue rechazada. Motivo: ', IFNULL(motivo_rechazo, 'No cumple requisitos')) as subtitulo, fecha_publicacion as orden, NULL as datos_solicitud
         FROM apoyo_beneficio 
         WHERE estado_revision = 'rechazado' 
@@ -550,7 +544,6 @@ app.get('/api/notificaciones', async (req, res) => {
     
     const [notificaciones] = await pool.query(sql);
 
-    // Desempaquetamos el JSON antes de mandarlo a Flutter
     const formateadas = notificaciones.map(n => {
       if (n.datos_solicitud && typeof n.datos_solicitud === 'string') {
         try { n.datos_solicitud = JSON.parse(n.datos_solicitud); } catch(e){}
@@ -634,11 +627,7 @@ app.put('/api/usuarios/verificar/:id', async (req, res) => {
 });
 
 // ==========================================
-// ENDPOINTS DE IA GENERATIVA
-// ==========================================
-
-// ==========================================
-// ENDPOINTS DE IA GENERATIVA
+// ENDPOINTS DE IA GENERATIVA (CUERPO COMPLETO)
 // ==========================================
 
 app.post('/api/ia-generativa', async (req, res) => {
@@ -648,25 +637,22 @@ app.post('/api/ia-generativa', async (req, res) => {
         if (!descripcion) {
             return res.status(400).json({ error: 'Falta la descripción' });
         }
+
+        // Instrucción estricta para asegurar cuerpo completo y fidelidad absoluta
         const prompt = `Photorealistic 8k highly detailed FULL BODY SHOT of a pet. The entire body from head to paws must be visible. Solid white background, studio lighting. STRICTLY OBEY THIS EXACT DESCRIPTION: ${descripcion}. No cropping, no close-up.`;
         
         const urlFinal = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true`;
 
-        // 1. Railway descarga la imagen (Railway jamás es bloqueado)
         const response = await fetch(urlFinal);
         
         if (!response.ok) {
             throw new Error('El motor IA rechazó la conexión');
         }
 
-        // 2. Transformamos la imagen binaria a un Buffer
         const arrayBuffer = await response.arrayBuffer();
         const buffer = Buffer.from(arrayBuffer);
-        
-        // 3. Convertimos a Base64 perfecto
         const base64Image = `data:image/jpeg;base64,${buffer.toString('base64')}`;
 
-        // 4. Se la enviamos a Flutter lista para usarse
         res.status(200).json({ imagen: base64Image });
     } catch (error) {
         console.error('Error generando IA en backend:', error);
@@ -674,12 +660,9 @@ app.post('/api/ia-generativa', async (req, res) => {
     }
 });
 
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API Online en el puerto ${PORT}`));
-
-process.on('uncaughtException', (err) => console.error(err));
-process.on('unhandledRejection', (err) => console.error(err));
-
+// ==========================================
+// INICIALIZACIÓN DEL SERVIDOR (ÚNICA DECLARACIÓN)
+// ==========================================
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API Online en el puerto ${PORT}`));
 
