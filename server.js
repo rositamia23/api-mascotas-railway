@@ -633,6 +633,44 @@ app.put('/api/usuarios/verificar/:id', async (req, res) => {
   }
 });
 
+// ==========================================
+// ENDPOINTS DE IA GENERATIVA
+// ==========================================
+
+app.post('/api/ia-generativa', async (req, res) => {
+    try {
+        const { descripcion } = req.body;
+        
+        if (!descripcion) {
+            return res.status(400).json({ error: 'Falta la descripción' });
+        }
+
+        // Prompt en inglés optimizado para máxima calidad fotorrealista
+        const prompt = `Photorealistic 8k highly detailed portrait of a pet exactly matching this description: ${descripcion}, solid white background, studio lighting`;
+        const urlFinal = `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=512&height=512&nologo=true`;
+
+        // 1. Railway descarga la imagen (Railway jamás es bloqueado)
+        const response = await fetch(urlFinal);
+        
+        if (!response.ok) {
+            throw new Error('El motor IA rechazó la conexión');
+        }
+
+        // 2. Transformamos la imagen binaria a un Buffer
+        const arrayBuffer = await response.arrayBuffer();
+        const buffer = Buffer.from(arrayBuffer);
+        
+        // 3. Convertimos a Base64 perfecto
+        const base64Image = `data:image/jpeg;base64,${buffer.toString('base64')}`;
+
+        // 4. Se la enviamos a Flutter lista para usarse
+        res.status(200).json({ imagen: base64Image });
+    } catch (error) {
+        console.error('Error generando IA en backend:', error);
+        res.status(500).json({ error: 'Servidor IA saturado' });
+    }
+});
+
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, '0.0.0.0', () => console.log(`🚀 API Online en el puerto ${PORT}`));
 
